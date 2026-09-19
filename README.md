@@ -4,7 +4,7 @@ Dashboard interne pour monitorer l'app Wakati. Cette v1 contient une seule page 
 **Treasury & Solvabilité**, qui compare en temps réel le solde on-chain réel du
 treasury au total dû aux utilisateurs (passif) pour chaque actif.
 
-## Comment ça marche
+## Comment ça marche 
 
 - Le treasury (portefeuille qui envoie les fonds lors des retraits) a des adresses
   publiques on-chain (BTC, EVM). Ce dashboard lit ces soldes en **lecture seule**
