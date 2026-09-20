@@ -1,198 +1,180 @@
 import { getSupabaseAdmin } from "@/lib/supabase";
-import {
-  getNativeBalance,
-  getTokenBalance,
-  getBtcBalance,
-  getNativeBalances,
-  getTokenBalances,
-  getBtcBalances
-} from "@/lib/chain";
+import { getDbPool } from "@/lib/db";
+import { getNativeBalance, getTokenBalance, getBtcBalance } from "@/lib/chain";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // toujours des données fraîches, jamais de cache
+export const dynamic = "force-dynamic";
 
-// Adresses publiques du treasury (dérivées de TREASURY_MNEMONIC côté backend Supabase).
-// Ce ne sont QUE des adresses publiques — aucune clé privée ici.
 const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
 const TREASURY_BTC_ADDRESS = process.env.TREASURY_BTC_ADDRESS || "";
 
-interface Row {
+const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
+
+interface CryptoRow {
   asset: string;
   network: string;
-  onChain: number | null; // solde de l'adresse du treasury
-  unswept: number | null; // solde cumulé des adresses de dépôt utilisateurs (non balayé)
-  unsweptFailed: number; // adresses utilisateurs dont la lecture a échoué
-  unsweptCount: number; // nombre d'adresses utilisateurs lues
+  onChain: number | null;
   liability: number;
   userCount: number;
-  priceUsd: number | null;
   error?: string;
 }
 
-interface FeeRow {
+interface InternalRow {
   asset: string;
-  count: number;
-  total: number;
-  priceUsd: number | null;
+  liability: number;
+  userCount: number;
 }
 
-interface FeesData {
-  rows: FeeRow[];
+interface FiatRow {
+  asset: string;
+  currency: string;
+  country: string;
+  pawapayBalance: number | null;
+  liability: number;
+  userCount: number;
   error?: string;
 }
 
-async function loadData(): Promise<Row[]> {
+async function loadLiabilities(): Promise<Map<string, { total: number; count: number }>> {
+  const pool = getDbPool();
+  const result = await pool.query<{ asset_symbol: string; total_liability: string; user_count: string }>(
+    `SELECT asset_symbol,
+            COALESCE(SUM(available_balance + COALESCE(staking_balance,0) + COALESCE(pending_balance,0)), 0) AS total_liability,
+            COUNT(*) FILTER (WHERE available_balance + COALESCE(staking_balance,0) + COALESCE(pending_balance,0) > 0) AS user_count
+     FROM user_balances
+     GROUP BY asset_symbol`
+  );
+
+  const map = new Map<string, { total: number; count: number }>();
+  for (const l of result.rows) {
+    map.set(l.asset_symbol, { total: Number(l.total_liability), count: Number(l.user_count) });
+  }
+  return map;
+}
+
+async function loadCryptoAndInternal(
+  liabilityMap: Map<string, { total: number; count: number }>
+): Promise<{ crypto: CryptoRow[]; internal: InternalRow[] }> {
   const supabase = getSupabaseAdmin();
 
-  const [
-    { data: liabilities, error: liabError },
-    { data: assets, error: assetsError },
-    { data: userAddrs, error: addrError },
-    { data: prices }
-  ] = await Promise.all([
-    supabase.rpc("get_asset_liabilities"),
-    supabase
-      .from("supported_assets")
-      .select("symbol, network, contract_address, decimals")
-      .neq("network", "Fiat"),
-    supabase.from("user_addresses").select("asset_symbol, address").eq("is_active", true),
-    supabase.from("asset_prices").select("asset_symbol, price_usd")
-  ]);
+  const { data: assets, error: assetsError } = await supabase
+    .from("supported_assets")
+    .select("symbol, network, contract_address, decimals")
+    .neq("network", "Fiat")
+    .eq("is_active", true);
 
-  if (liabError) throw new Error(`Erreur chargement passif: ${liabError.message}`);
   if (assetsError) throw new Error(`Erreur chargement actifs: ${assetsError.message}`);
-  if (addrError) throw new Error(`Erreur chargement adresses utilisateurs: ${addrError.message}`);
 
-  const priceMap = new Map<string, number>();
-  for (const p of prices || []) priceMap.set(p.asset_symbol, Number(p.price_usd));
+  const crypto: CryptoRow[] = [];
+  const internal: InternalRow[] = [];
 
-  const liabilityMap = new Map<string, { total: number; count: number }>();
-  for (const l of liabilities || []) {
-    liabilityMap.set(l.asset_symbol, {
-      total: Number(l.total_liability),
-      count: Number(l.user_count)
+  for (const asset of assets || []) {
+    const liability = liabilityMap.get(asset.symbol) || { total: 0, count: 0 };
+
+    if (INTERNAL_ONLY_ASSETS.has(asset.symbol)) {
+      internal.push({ asset: asset.symbol, liability: liability.total, userCount: liability.count });
+      continue;
+    }
+
+    let onChain: number | null = null;
+    let error: string | undefined;
+
+    try {
+      const network = asset.network.toLowerCase();
+
+      if (asset.symbol === "BTC") {
+        if (!TREASURY_BTC_ADDRESS) throw new Error("TREASURY_BTC_ADDRESS non configurée");
+        onChain = await getBtcBalance(TREASURY_BTC_ADDRESS);
+      } else if (asset.contract_address) {
+        if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
+        onChain = await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, asset.decimals || 18);
+      } else {
+        if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
+        onChain = await getNativeBalance(network, TREASURY_EVM_ADDRESS);
+      }
+    } catch (e: any) {
+      error = e?.message || "Erreur inconnue";
+    }
+
+    crypto.push({
+      asset: asset.symbol,
+      network: asset.network,
+      onChain,
+      liability: liability.total,
+      userCount: liability.count,
+      error
     });
   }
 
-  // Adresses de dépôt utilisateurs, dédupliquées par actif (hors adresse du treasury).
-  const treasuryLower = new Set(
-    [TREASURY_EVM_ADDRESS, TREASURY_BTC_ADDRESS].filter(Boolean).map((a) => a.toLowerCase())
-  );
-  const addrMap = new Map<string, string[]>();
-  for (const a of userAddrs || []) {
-    if (!a.address || treasuryLower.has(String(a.address).toLowerCase())) continue;
-    const list = addrMap.get(a.asset_symbol) || [];
-    if (!list.includes(a.address)) list.push(a.address);
-    addrMap.set(a.asset_symbol, list);
-  }
-
-  const relevant = (assets || []).filter((asset) => {
-    const liability = liabilityMap.get(asset.symbol) || { total: 0, count: 0 };
-    // On n'affiche que les actifs ayant un passif
-    return !(liability.total === 0 && liability.count === 0);
-  });
-
-  const rows = await Promise.all(
-    relevant.map(async (asset): Promise<Row> => {
-      const liability = liabilityMap.get(asset.symbol) || { total: 0, count: 0 };
-      const addresses = addrMap.get(asset.symbol) || [];
-      const network = asset.network.toLowerCase();
-      const decimals = asset.decimals || 18;
-
-      let onChain: number | null = null;
-      let error: string | undefined;
-      let unswept: number | null = null;
-      let unsweptFailed = 0;
-      let unsweptCount = 0;
-
-      // Treasury et adresses utilisateurs sont lus en parallèle
-      const treasuryTask = (async () => {
-        try {
-          if (asset.symbol === "BTC") {
-            if (!TREASURY_BTC_ADDRESS) throw new Error("TREASURY_BTC_ADDRESS non configurée");
-            onChain = await getBtcBalance(TREASURY_BTC_ADDRESS);
-          } else if (asset.contract_address) {
-            if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-            onChain = await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, decimals);
-          } else {
-            if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-            onChain = await getNativeBalance(network, TREASURY_EVM_ADDRESS);
-          }
-        } catch (e: any) {
-          error = e?.message || "Erreur inconnue";
-        }
-      })();
-
-      const usersTask = (async () => {
-        try {
-          const r =
-            asset.symbol === "BTC"
-              ? await getBtcBalances(addresses)
-              : asset.contract_address
-                ? await getTokenBalances(network, asset.contract_address, addresses, decimals)
-                : await getNativeBalances(network, addresses);
-          unswept = r.total;
-          unsweptFailed = r.failed;
-          unsweptCount = r.checked;
-        } catch {
-          unswept = null;
-          unsweptFailed = addresses.length;
-        }
-      })();
-
-      await Promise.all([treasuryTask, usersTask]);
-
-      return {
-        asset: asset.symbol,
-        network: asset.network,
-        onChain,
-        unswept,
-        unsweptFailed,
-        unsweptCount,
-        liability: liability.total,
-        userCount: liability.count,
-        priceUsd: priceMap.get(asset.symbol) ?? null,
-        error
-      };
-    })
-  );
-
-  return rows.sort((a, b) => a.asset.localeCompare(b.asset));
+  crypto.sort((a, b) => a.asset.localeCompare(b.asset));
+  return { crypto, internal };
 }
 
-async function loadFees(): Promise<FeesData> {
+async function fetchPawapayBalances(): Promise<Map<string, number> | { error: string }> {
+  const secret = process.env.DASHBOARD_API_SECRET;
+  const supabaseUrl = process.env.SUPABASE_URL;
+
+  if (!secret || !supabaseUrl) {
+    return { error: "DASHBOARD_API_SECRET ou SUPABASE_URL manquant" };
+  }
+
   try {
-    const supabase = getSupabaseAdmin();
-    const [{ data: fees, error: feesError }, { data: prices }] = await Promise.all([
-      supabase.rpc("get_platform_fees_totals"),
-      supabase.from("asset_prices").select("asset_symbol, price_usd")
-    ]);
-    if (feesError) throw new Error(feesError.message);
+    const res = await fetch(`${supabaseUrl}/functions/v1/dashboard-pawapay-balance`, {
+      headers: { "x-dashboard-secret": secret },
+      cache: "no-store"
+    });
 
-    const priceMap = new Map<string, number>();
-    for (const p of prices || []) priceMap.set(p.asset_symbol, Number(p.price_usd));
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { error: body.error || `PawaPay balance endpoint a répondu ${res.status}` };
+    }
 
-    const rows: FeeRow[] = (fees || []).map((f: any) => ({
-      asset: f.asset_symbol,
-      count: Number(f.fee_count),
-      total: Number(f.total_fees),
-      priceUsd: priceMap.get(f.asset_symbol) ?? null
-    }));
-    rows.sort((a, b) => (b.total * (b.priceUsd ?? 0)) - (a.total * (a.priceUsd ?? 0)));
-    return { rows };
+    const data = await res.json();
+    const map = new Map<string, number>();
+    for (const b of data.balances || []) {
+      map.set(b.country, Number(b.balance));
+    }
+    return map;
   } catch (e: any) {
-    return { rows: [], error: e?.message || "Erreur de chargement des frais" };
+    return { error: e?.message || "Erreur réseau vers dashboard-pawapay-balance" };
   }
 }
 
-function formatUsd(n: number): string {
-  const abs = Math.abs(n);
-  return n.toLocaleString("fr-FR", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: abs > 0 && abs < 1 ? 6 : 2
-  });
+async function loadFiat(liabilityMap: Map<string, { total: number; count: number }>): Promise<FiatRow[]> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: countries, error: countriesError } = await supabase
+    .from("payment_countries")
+    .select("iso_code, currency_code, wallet_asset_symbol")
+    .eq("is_active", true);
+
+  if (countriesError) throw new Error(`Erreur chargement pays: ${countriesError.message}`);
+
+  const pawapayResult = await fetchPawapayBalances();
+  const globalError = "error" in pawapayResult ? pawapayResult.error : undefined;
+  const balances = "error" in pawapayResult ? new Map<string, number>() : pawapayResult;
+
+  const rows: FiatRow[] = [];
+  for (const country of countries || []) {
+    const pawapayBalance = balances.get(country.iso_code) ?? null;
+    rows.push({
+      asset: country.wallet_asset_symbol,
+      currency: country.currency_code,
+      country: country.iso_code,
+      pawapayBalance,
+      liability: 0,
+      userCount: 0,
+      error: globalError
+    });
+  }
+
+  for (const row of rows) {
+    const liab = liabilityMap.get(row.asset);
+    row.liability = liab?.total || 0;
+    row.userCount = liab?.count || 0;
+  }
+
+  return rows;
 }
 
 function formatNumber(n: number): string {
@@ -200,24 +182,29 @@ function formatNumber(n: number): string {
 }
 
 export default async function TreasuryPage() {
-  let rows: Row[] = [];
+  let crypto: CryptoRow[] = [];
+  let internal: InternalRow[] = [];
+  let fiat: FiatRow[] = [];
   let loadError: string | null = null;
 
-  const [dataResult, fees] = await Promise.all([
-    loadData().then(
-      (r) => ({ rows: r, error: null as string | null }),
-      (e: any) => ({ rows: [] as Row[], error: (e?.message || "Erreur de chargement") as string | null })
-    ),
-    loadFees()
-  ]);
-  rows = dataResult.rows;
-  loadError = dataResult.error;
+  try {
+    const liabilityMap = await loadLiabilities();
+    const [{ crypto: c, internal: i }, f] = await Promise.all([
+      loadCryptoAndInternal(liabilityMap),
+      loadFiat(liabilityMap)
+    ]);
+    crypto = c;
+    internal = i;
+    fiat = f;
+  } catch (e: any) {
+    loadError = e?.message || "Erreur de chargement";
+  }
 
   return (
     <div>
       <h1 style={{ color: "#f8fafc", marginBottom: "0.25rem" }}>Treasury & Solvabilité</h1>
       <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1.5rem", fontSize: "0.9rem" }}>
-        Compare le solde réel on-chain du treasury au total dû aux utilisateurs (passif). Données rafraîchies à chaque chargement de page.
+        Compare le solde réel (on-chain ou chez PawaPay) au total dû aux utilisateurs. Données rafraîchies à chaque chargement de page.
       </p>
 
       {loadError && (
@@ -226,175 +213,168 @@ export default async function TreasuryPage() {
         </div>
       )}
 
-      {!TREASURY_EVM_ADDRESS || !TREASURY_BTC_ADDRESS ? (
+      {(!TREASURY_EVM_ADDRESS || !TREASURY_BTC_ADDRESS) && (
         <div style={{ background: "#78350f", color: "#fde68a", padding: "1rem", borderRadius: "8px", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
-          ⚠️ TREASURY_EVM_ADDRESS et/ou TREASURY_BTC_ADDRESS ne sont pas configurées dans les variables d'environnement Vercel. Voir le README pour les valeurs à utiliser.
-        </div>
-      ) : null}
-
-      <div style={{ background: "#1e293b", borderRadius: "12px", overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              <Th>Actif</Th>
-              <Th>Réseau</Th>
-              <Th align="right">Treasury</Th>
-              <Th align="right">Adresses utilisateurs (non balayé)</Th>
-              <Th align="right">Total on-chain</Th>
-              <Th align="right">Dû aux utilisateurs</Th>
-              <Th align="right">Écart</Th>
-              <Th align="right">Écart (USD)</Th>
-              <Th align="right">Utilisateurs</Th>
-              <Th>Statut</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const EPS = 0.00000001;
-              const total = row.onChain !== null ? row.onChain + (row.unswept ?? 0) : null;
-              const diff = total !== null ? total - row.liability : null;
-              const treasuryDiff = row.onChain !== null ? row.onChain - row.liability : null;
-              const isShortfall = diff !== null && diff < -EPS;
-              // Couvert au total, mais pas encore ramené sur l'adresse du treasury
-              const toSweep = !isShortfall && treasuryDiff !== null && treasuryDiff < -EPS;
-              const partialRead = row.unswept === null || row.unsweptFailed > 0;
-
-              return (
-                <tr key={row.asset} style={{ borderTop: "1px solid #334155" }}>
-                  <Td><strong style={{ color: "#f8fafc" }}>{row.asset}</strong></Td>
-                  <Td>{row.network}</Td>
-                  <Td align="right">
-                    {row.error ? (
-                      <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{row.error}</span>
-                    ) : (
-                      formatNumber(row.onChain ?? 0)
-                    )}
-                  </Td>
-                  <Td align="right">
-                    {row.unswept === null ? (
-                      <span style={{ color: "#f87171", fontSize: "0.8rem" }}>Lecture impossible</span>
-                    ) : (
-                      <>
-                        {formatNumber(row.unswept)}
-                        <div style={{ color: "#64748b", fontSize: "0.7rem" }}>
-                          {row.unsweptCount} adresse{row.unsweptCount > 1 ? "s" : ""}
-                          {row.unsweptFailed > 0 ? ` · ${row.unsweptFailed} illisible${row.unsweptFailed > 1 ? "s" : ""}` : ""}
-                        </div>
-                      </>
-                    )}
-                  </Td>
-                  <Td align="right">{total !== null ? formatNumber(total) : "—"}</Td>
-                  <Td align="right">{formatNumber(row.liability)}</Td>
-                  <Td align="right">
-                    {diff !== null ? (
-                      <span style={{ color: isShortfall ? "#f87171" : "#4ade80" }}>
-                        {diff >= 0 ? "+" : ""}
-                        {formatNumber(diff)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </Td>
-                  <Td align="right">
-                    {diff !== null && row.priceUsd !== null ? (
-                      <span style={{ color: isShortfall ? "#f87171" : "#4ade80" }}>
-                        {diff >= 0 ? "+" : ""}
-                        {formatUsd(diff * row.priceUsd)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </Td>
-                  <Td align="right">{row.userCount}</Td>
-                  <Td>
-                    {row.error ? (
-                      <Badge color="#f87171" bg="#7f1d1d">Erreur</Badge>
-                    ) : isShortfall ? (
-                      <Badge color="#f87171" bg="#7f1d1d">⚠ Déficit</Badge>
-                    ) : toSweep ? (
-                      <Badge color="#fbbf24" bg="#78350f">À balayer</Badge>
-                    ) : (
-                      <Badge color="#4ade80" bg="#14532d">OK</Badge>
-                    )}
-                    {partialRead && !row.error && (
-                      <div style={{ color: "#fbbf24", fontSize: "0.7rem", marginTop: "0.25rem" }}>
-                        lecture partielle
-                      </div>
-                    )}
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <p style={{ color: "#64748b", fontSize: "0.8rem", marginTop: "1rem" }}>
-        <strong>Total on-chain</strong> = adresse du treasury + adresses de dépôt des utilisateurs (fonds pas encore balayés).
-        <strong>Déficit</strong> : même en additionnant tout, il y a moins on-chain que ce qui est dû — à traiter en priorité.
-        <strong>À balayer</strong> : le total couvre le dû, mais une partie des fonds est encore sur les adresses des utilisateurs.
-        Un total supérieur au passif est normal (marge, frais collectés non encore retirés, etc.).
-        Le gas restant sur les adresses utilisateurs est compté dans « Adresses utilisateurs », mais n'est pas toujours récupérable.
-      </p>
-
-      <h2 style={{ color: "#f8fafc", marginTop: "2.5rem", marginBottom: "0.25rem", fontSize: "1.2rem" }}>
-        Frais de la plateforme
-      </h2>
-      <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1rem", fontSize: "0.85rem" }}>
-        Total des frais collectés depuis le début. Les frais de test et les pertes nettes de jeu sont exclus.
-      </p>
-
-      {fees.error && (
-        <div style={{ background: "#7f1d1d", color: "#fecaca", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}>
-          Erreur : {fees.error}
+          ⚠️ TREASURY_EVM_ADDRESS et/ou TREASURY_BTC_ADDRESS ne sont pas configurées.
         </div>
       )}
 
-      <div style={{ background: "#1e293b", borderRadius: "12px", overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              <Th>Actif</Th>
-              <Th align="right">Frais collectés</Th>
-              <Th align="right">Nombre</Th>
-              <Th align="right">Valeur (USD)</Th>
+      <SectionTitle>Crypto (on-chain)</SectionTitle>
+      <CryptoTable rows={crypto} />
+
+      <SectionTitle>Fiat (via PawaPay)</SectionTitle>
+      <FiatTable rows={fiat} />
+
+      <SectionTitle>Tokens internes (hors périmètre on-chain)</SectionTitle>
+      <InternalTable rows={internal} />
+
+      <p style={{ color: "#64748b", fontSize: "0.8rem", marginTop: "1.5rem" }}>
+        "Déficit" signifie que le solde réel (on-chain ou PawaPay) a moins que ce qui est dû aux utilisateurs — à traiter en priorité.
+        Un solde supérieur au passif est normal (marge de fonctionnement, frais non encore retirés, etc.).
+        Les tokens internes n'ont pas encore de réserve on-chain suivie ici.
+      </p>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: "2rem 0 0.75rem" }}>{children}</h2>;
+}
+
+function TableShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#1e293b", borderRadius: "12px", overflow: "hidden" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+    </div>
+  );
+}
+
+function CryptoTable({ rows }: { rows: CryptoRow[] }) {
+  if (rows.length === 0) {
+    return <EmptyState text="Aucun actif crypto actif." />;
+  }
+  return (
+    <TableShell>
+      <thead>
+        <tr style={{ background: "#0f172a" }}>
+          <Th>Actif</Th>
+          <Th>Réseau</Th>
+          <Th align="right">Solde on-chain (treasury)</Th>
+          <Th align="right">Dû aux utilisateurs</Th>
+          <Th align="right">Écart</Th>
+          <Th align="right">Utilisateurs</Th>
+          <Th>Statut</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const diff = row.onChain !== null ? row.onChain - row.liability : null;
+          const isShortfall = diff !== null && diff < -0.00000001;
+
+          return (
+            <tr key={row.asset} style={{ borderTop: "1px solid #334155" }}>
+              <Td><strong style={{ color: "#f8fafc" }}>{row.asset}</strong></Td>
+              <Td>{row.network}</Td>
+              <Td align="right">
+                {row.error ? <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{row.error}</span> : formatNumber(row.onChain ?? 0)}
+              </Td>
+              <Td align="right">{formatNumber(row.liability)}</Td>
+              <Td align="right">
+                {diff !== null ? (
+                  <span style={{ color: isShortfall ? "#f87171" : "#4ade80" }}>
+                    {diff >= 0 ? "+" : ""}
+                    {formatNumber(diff)}
+                  </span>
+                ) : "—"}
+              </Td>
+              <Td align="right">{row.userCount}</Td>
+              <Td>
+                {row.error ? (
+                  <Badge color="#f87171" bg="#7f1d1d">Erreur</Badge>
+                ) : isShortfall ? (
+                  <Badge color="#f87171" bg="#7f1d1d">⚠ Déficit</Badge>
+                ) : (
+                  <Badge color="#4ade80" bg="#14532d">OK</Badge>
+                )}
+              </Td>
             </tr>
-          </thead>
-          <tbody>
-            {fees.rows.length === 0 && !fees.error ? (
-              <tr style={{ borderTop: "1px solid #334155" }}>
-                <Td>
-                  <span style={{ color: "#94a3b8" }}>Aucun frais collecté.</span>
-                </Td>
-                <Td align="right">—</Td>
-                <Td align="right">—</Td>
-                <Td align="right">—</Td>
-              </tr>
-            ) : (
-              fees.rows.map((f) => (
-                <tr key={f.asset} style={{ borderTop: "1px solid #334155" }}>
-                  <Td><strong style={{ color: "#f8fafc" }}>{f.asset}</strong></Td>
-                  <Td align="right">{formatNumber(f.total)}</Td>
-                  <Td align="right">{f.count}</Td>
-                  <Td align="right">{f.priceUsd !== null ? formatUsd(f.total * f.priceUsd) : "—"}</Td>
-                </tr>
-              ))
-            )}
-            {fees.rows.length > 0 && (
-              <tr style={{ borderTop: "1px solid #334155", background: "#0f172a" }}>
-                <Td><strong style={{ color: "#f8fafc" }}>Total</strong></Td>
-                <Td align="right">—</Td>
-                <Td align="right">{fees.rows.reduce((n, f) => n + f.count, 0)}</Td>
-                <Td align="right">
-                  <strong style={{ color: "#f8fafc" }}>
-                    {formatUsd(fees.rows.reduce((n, f) => n + (f.priceUsd !== null ? f.total * f.priceUsd : 0), 0))}
-                  </strong>
-                </Td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          );
+        })}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function FiatTable({ rows }: { rows: FiatRow[] }) {
+  if (rows.length === 0) {
+    return <EmptyState text="Aucun pays fiat actif." />;
+  }
+  return (
+    <TableShell>
+      <thead>
+        <tr style={{ background: "#0f172a" }}>
+          <Th>Pays</Th>
+          <Th>Devise</Th>
+          <Th>Actif wallet</Th>
+          <Th align="right">Solde chez PawaPay</Th>
+          <Th align="right">Dû aux utilisateurs (actif global)</Th>
+          <Th>Statut</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.country} style={{ borderTop: "1px solid #334155" }}>
+            <Td><strong style={{ color: "#f8fafc" }}>{row.country}</strong></Td>
+            <Td>{row.currency}</Td>
+            <Td>{row.asset}</Td>
+            <Td align="right">
+              {row.error ? (
+                <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{row.error}</span>
+              ) : row.pawapayBalance !== null ? (
+                formatNumber(row.pawapayBalance)
+              ) : "—"}
+            </Td>
+            <Td align="right">{formatNumber(row.liability)}</Td>
+            <Td>
+              {row.error ? <Badge color="#f87171" bg="#7f1d1d">Erreur</Badge> : <Badge color="#64748b" bg="#1e293b">Info</Badge>}
+            </Td>
+          </tr>
+        ))}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function InternalTable({ rows }: { rows: InternalRow[] }) {
+  if (rows.length === 0) {
+    return <EmptyState text="Aucun token interne." />;
+  }
+  return (
+    <TableShell>
+      <thead>
+        <tr style={{ background: "#0f172a" }}>
+          <Th>Actif</Th>
+          <Th align="right">Dû aux utilisateurs</Th>
+          <Th align="right">Utilisateurs</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.asset} style={{ borderTop: "1px solid #334155" }}>
+            <Td><strong style={{ color: "#f8fafc" }}>{row.asset}</strong></Td>
+            <Td align="right">{formatNumber(row.liability)}</Td>
+            <Td align="right">{row.userCount}</Td>
+          </tr>
+        ))}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div style={{ background: "#1e293b", borderRadius: "12px", padding: "1.5rem", color: "#64748b", fontSize: "0.9rem" }}>
+      {text}
     </div>
   );
 }
@@ -427,16 +407,7 @@ function Td({ children, align }: { children: React.ReactNode; align?: "left" | "
 
 function Badge({ children, color, bg }: { children: React.ReactNode; color: string; bg: string }) {
   return (
-    <span
-      style={{
-        background: bg,
-        color,
-        padding: "0.2rem 0.6rem",
-        borderRadius: "999px",
-        fontSize: "0.75rem",
-        fontWeight: 600
-      }}
-    >
+    <span style={{ background: bg, color, padding: "0.2rem 0.6rem", borderRadius: "999px", fontSize: "0.75rem", fontWeight: 600 }}>
       {children}
     </span>
   );
