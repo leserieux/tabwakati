@@ -26,7 +26,12 @@ export default async function ActivityPage() {
     q<any>(db.from("transactions").select("id").eq("status", "failed").gte("created_at", since24h)),
     q<any>(db.from("sweep_log").select("id").neq("status", "swept").eq("dry_run", false).gte("created_at", since7d)),
     q<any>(
-      db.from("transactions").select("id, type, status, asset_symbol, amount, created_at").in("status", ["pending", "processing", "failed"]).order("created_at", { ascending: false }).limit(15)
+      db
+        .from("transactions")
+        .select("id, type, status, asset_symbol, amount, created_at")
+        .or(`status.in.(pending,processing),and(status.eq.failed,created_at.gte.${since7d})`)
+        .order("created_at", { ascending: false })
+        .limit(15)
     )
   ]);
 
@@ -111,7 +116,7 @@ export default async function ActivityPage() {
       )}
 
       <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: "2rem 0 0.25rem" }}>Transactions à vérifier</h2>
-      <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0 0 0.75rem" }}>En attente ou en échec (les 15 plus récentes).</p>
+      <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0 0 0.75rem" }}>En attente, ou en échec cette semaine (les 15 plus récentes).</p>
       {toCheck.rows.length === 0 ? (
         <EmptyState text="Aucune transaction à vérifier." />
       ) : (
