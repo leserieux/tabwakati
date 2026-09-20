@@ -25,6 +25,19 @@ interface Row {
   unsweptCount: number; // nombre d'adresses utilisateurs lues
   liability: number;
   userCount: number;
+  priceUsd: number | null;
+  error?: string;
+}
+
+interface FeeRow {
+  asset: string;
+  count: number;
+  total: number;
+  priceUsd: number | null;
+}
+
+interface FeesData {
+  rows: FeeRow[];
   error?: string;
 }
 
@@ -34,19 +47,24 @@ async function loadData(): Promise<Row[]> {
   const [
     { data: liabilities, error: liabError },
     { data: assets, error: assetsError },
-    { data: userAddrs, error: addrError }
+    { data: userAddrs, error: addrError },
+    { data: prices }
   ] = await Promise.all([
     supabase.rpc("get_asset_liabilities"),
     supabase
       .from("supported_assets")
       .select("symbol, network, contract_address, decimals")
       .neq("network", "Fiat"),
-    supabase.from("user_addresses").select("asset_symbol, address").eq("is_active", true)
+    supabase.from("user_addresses").select("asset_symbol, address").eq("is_active", true),
+    supabase.from("asset_prices").select("asset_symbol, price_usd")
   ]);
 
   if (liabError) throw new Error(`Erreur chargement passif: ${liabError.message}`);
   if (assetsError) throw new Error(`Erreur chargement actifs: ${assetsError.message}`);
   if (addrError) throw new Error(`Erreur chargement adresses utilisateurs: ${addrError.message}`);
+
+  const priceMap = new Map<string, number>();
+  for (const p of prices || []) priceMap.set(p.asset_symbol, Number(p.price_usd));
 
   const liabilityMap = new Map<string, { total: number; count: number }>();
   for (const l of liabilities || []) {
@@ -133,12 +151,48 @@ async function loadData(): Promise<Row[]> {
         unsweptCount,
         liability: liability.total,
         userCount: liability.count,
+        priceUsd: priceMap.get(asset.symbol) ?? null,
         error
       };
     })
   );
 
   return rows.sort((a, b) => a.asset.localeCompare(b.asset));
+}
+
+async function loadFees(): Promise<FeesData> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const [{ data: fees, error: feesError }, { data: prices }] = await Promise.all([
+      supabase.rpc("get_platform_fees_totals"),
+      supabase.from("asset_prices").select("asset_symbol, price_usd")
+    ]);
+    if (feesError) throw new Error(feesError.message);
+
+    const priceMap = new Map<string, number>();
+    for (const p of prices || []) priceMap.set(p.asset_symbol, Number(p.price_usd));
+
+    const rows: FeeRow[] = (fees || []).map((f: any) => ({
+      asset: f.asset_symbol,
+      count: Number(f.fee_count),
+      total: Number(f.total_fees),
+      priceUsd: priceMap.get(f.asset_symbol) ?? null
+    }));
+    rows.sort((a, b) => (b.total * (b.priceUsd ?? 0)) - (a.total * (a.priceUsd ?? 0)));
+    return { rows };
+  } catch (e: any) {
+    return { rows: [], error: e?.message || "Erreur de chargement des frais" };
+  }
+}
+
+function formatUsd(n: number): string {
+  const abs = Math.abs(n);
+  return n.toLocaleString("fr-FR", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: abs > 0 && abs < 1 ? 6 : 2
+  });
 }
 
 function formatNumber(n: number): string {
@@ -149,11 +203,15 @@ export default async function TreasuryPage() {
   let rows: Row[] = [];
   let loadError: string | null = null;
 
-  try {
-    rows = await loadData();
-  } catch (e: any) {
-    loadError = e?.message || "Erreur de chargement";
-  }
+  const [dataResult, fees] = await Promise.all([
+    loadData().then(
+      (r) => ({ rows: r, error: null as string | null }),
+      (e: any) => ({ rows: [] as Row[], error: (e?.message || "Erreur de chargement") as string | null })
+    ),
+    loadFees()
+  ]);
+  rows = dataResult.rows;
+  loadError = dataResult.error;
 
   return (
     <div>
@@ -174,7 +232,7 @@ export default async function TreasuryPage() {
         </div>
       ) : null}
 
-      <div style={{ background: "#1e293b", borderRadius: "12px", overflow: "hidden" }}>
+      <div style={{ background: "#1e293b", borderRadius: "12px", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#0f172a" }}>
@@ -185,6 +243,7 @@ export default async function TreasuryPage() {
               <Th align="right">Total on-chain</Th>
               <Th align="right">Dû aux utilisateurs</Th>
               <Th align="right">Écart</Th>
+              <Th align="right">Écart (USD)</Th>
               <Th align="right">Utilisateurs</Th>
               <Th>Statut</Th>
             </tr>
@@ -236,6 +295,16 @@ export default async function TreasuryPage() {
                       "—"
                     )}
                   </Td>
+                  <Td align="right">
+                    {diff !== null && row.priceUsd !== null ? (
+                      <span style={{ color: isShortfall ? "#f87171" : "#4ade80" }}>
+                        {diff >= 0 ? "+" : ""}
+                        {formatUsd(diff * row.priceUsd)}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </Td>
                   <Td align="right">{row.userCount}</Td>
                   <Td>
                     {row.error ? (
@@ -267,6 +336,65 @@ export default async function TreasuryPage() {
         Un total supérieur au passif est normal (marge, frais collectés non encore retirés, etc.).
         Le gas restant sur les adresses utilisateurs est compté dans « Adresses utilisateurs », mais n'est pas toujours récupérable.
       </p>
+
+      <h2 style={{ color: "#f8fafc", marginTop: "2.5rem", marginBottom: "0.25rem", fontSize: "1.2rem" }}>
+        Frais de la plateforme
+      </h2>
+      <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1rem", fontSize: "0.85rem" }}>
+        Total des frais collectés depuis le début. Les frais de test et les pertes nettes de jeu sont exclus.
+      </p>
+
+      {fees.error && (
+        <div style={{ background: "#7f1d1d", color: "#fecaca", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}>
+          Erreur : {fees.error}
+        </div>
+      )}
+
+      <div style={{ background: "#1e293b", borderRadius: "12px", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#0f172a" }}>
+              <Th>Actif</Th>
+              <Th align="right">Frais collectés</Th>
+              <Th align="right">Nombre</Th>
+              <Th align="right">Valeur (USD)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {fees.rows.length === 0 && !fees.error ? (
+              <tr style={{ borderTop: "1px solid #334155" }}>
+                <Td>
+                  <span style={{ color: "#94a3b8" }}>Aucun frais collecté.</span>
+                </Td>
+                <Td align="right">—</Td>
+                <Td align="right">—</Td>
+                <Td align="right">—</Td>
+              </tr>
+            ) : (
+              fees.rows.map((f) => (
+                <tr key={f.asset} style={{ borderTop: "1px solid #334155" }}>
+                  <Td><strong style={{ color: "#f8fafc" }}>{f.asset}</strong></Td>
+                  <Td align="right">{formatNumber(f.total)}</Td>
+                  <Td align="right">{f.count}</Td>
+                  <Td align="right">{f.priceUsd !== null ? formatUsd(f.total * f.priceUsd) : "—"}</Td>
+                </tr>
+              ))
+            )}
+            {fees.rows.length > 0 && (
+              <tr style={{ borderTop: "1px solid #334155", background: "#0f172a" }}>
+                <Td><strong style={{ color: "#f8fafc" }}>Total</strong></Td>
+                <Td align="right">—</Td>
+                <Td align="right">{fees.rows.reduce((n, f) => n + f.count, 0)}</Td>
+                <Td align="right">
+                  <strong style={{ color: "#f8fafc" }}>
+                    {formatUsd(fees.rows.reduce((n, f) => n + (f.priceUsd !== null ? f.total * f.priceUsd : 0), 0))}
+                  </strong>
+                </Td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
