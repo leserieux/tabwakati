@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
+import { getSupabaseAdmin, loadPrices } from "@/lib/data";
 import {
   getNativeBalance,
   getTokenBalance,
@@ -7,8 +7,9 @@ import {
   getTokenBalances,
   getBtcBalances
 } from "@/lib/chain";
+import { toAlpha2 } from "@/lib/countries";
 import { formatNumber, formatUsd } from "@/lib/format";
-import { PageTitle, SectionTitle, TableShell, Th, Td, Badge, EmptyState, ErrorBox, Alert } from "@/components/ui";
+import { TableShell, Th, Td, Badge, EmptyState } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,52 +17,31 @@ export const dynamic = "force-dynamic";
 const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
 const TREASURY_BTC_ADDRESS = process.env.TREASURY_BTC_ADDRESS || "";
 
-// Tokens gérés en interne : pas de réserve on-chain suivie ici
+// Tokens gérés en interne : aucune réserve à couvrir ici
 const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
+const EPS = 0.00000001;
 
 type Liab = { total: number; count: number };
+type Status = "covered" | "short" | "sweep" | "error";
 
-interface CryptoRow {
+/** Une ligne = un actif : ce que j'ai, ce que je dois, le résultat. */
+interface Line {
   asset: string;
-  network: string;
-  onChain: number | null; // adresse du treasury
-  unswept: number | null; // adresses de dépôt des utilisateurs (pas encore balayé)
-  unsweptCount: number;
-  unsweptFailed: number;
-  liability: number;
-  userCount: number;
+  label: string; // ex. "BNB (BSC)"
+  have: number | null;
+  owe: number;
+  note?: string; // ex. "dont 2 sur les adresses des utilisateurs"
+  status: Status;
   priceUsd: number | null;
-  depositsPaused: boolean;
   error?: string;
+  details?: { label: string; value: number }[];
 }
 
-interface InternalRow {
-  asset: string;
-  liability: number;
-  userCount: number;
-  priceUsd: number | null;
-}
-
-interface FiatRow {
-  asset: string;
-  currency: string;
-  country: string;
-  pawapayBalance: number | null;
-  liability: number;
-  userCount: number;
-  error?: string;
-}
-
-interface FeeRow {
-  asset: string;
-  count: number;
-  total: number;
-  priceUsd: number | null;
-}
+// ─────────────────────────── Chargement des données ───────────────────────────
 
 async function loadLiabilities(): Promise<Map<string, Liab>> {
   const { data, error } = await getSupabaseAdmin().rpc("get_asset_liabilities");
-  if (error) throw new Error(`Erreur chargement passif: ${error.message}`);
+  if (error) throw new Error(`Impossible de lire ce qui est dû aux utilisateurs (${error.message})`);
   const map = new Map<string, Liab>();
   for (const l of (data as any[]) || []) {
     map.set(l.asset_symbol, { total: Number(l.total_liability), count: Number(l.user_count) });
@@ -69,22 +49,20 @@ async function loadLiabilities(): Promise<Map<string, Liab>> {
   return map;
 }
 
-async function loadCryptoAndInternal(
-  liabilityMap: Map<string, Liab>,
-  prices: Map<string, number>
-): Promise<{ crypto: CryptoRow[]; internal: InternalRow[] }> {
-  const supabase = getSupabaseAdmin();
+function computeStatus(have: number | null, owe: number, treasuryOnly: number | null): Status {
+  if (have === null) return "error";
+  if (have < owe - EPS) return "short";
+  if (treasuryOnly !== null && treasuryOnly < owe - EPS) return "sweep";
+  return "covered";
+}
 
-  const [{ data: assets, error: assetsError }, { data: userAddrs, error: addrError }] = await Promise.all([
-    supabase
-      .from("supported_assets")
-      .select("symbol, network, contract_address, decimals, can_be_deposited")
-      .neq("network", "Fiat")
-      .eq("is_active", true),
-    supabase.from("user_addresses").select("asset_symbol, address").eq("is_active", true)
+async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; internal: Liab & { priceUsd: number | null } | null }> {
+  const db = getSupabaseAdmin();
+  const [{ data: assets, error: assetsError }, { data: userAddrs }] = await Promise.all([
+    db.from("supported_assets").select("symbol, network, contract_address, decimals").neq("network", "Fiat").eq("is_active", true),
+    db.from("user_addresses").select("asset_symbol, address").eq("is_active", true)
   ]);
-  if (assetsError) throw new Error(`Erreur chargement actifs: ${assetsError.message}`);
-  if (addrError) throw new Error(`Erreur chargement adresses utilisateurs: ${addrError.message}`);
+  if (assetsError) throw new Error(`Impossible de lire les actifs (${assetsError.message})`);
 
   const treasuryLower = new Set([TREASURY_EVM_ADDRESS, TREASURY_BTC_ADDRESS].filter(Boolean).map((a) => a.toLowerCase()));
   const addrMap = new Map<string, string[]>();
@@ -95,423 +73,327 @@ async function loadCryptoAndInternal(
     addrMap.set(a.asset_symbol, list);
   }
 
-  const internal: InternalRow[] = [];
-  const cryptoAssets: NonNullable<typeof assets> = [];
-  for (const asset of assets || []) {
-    const liability = liabilityMap.get(asset.symbol) || { total: 0, count: 0 };
-    if (INTERNAL_ONLY_ASSETS.has(asset.symbol)) {
-      internal.push({ asset: asset.symbol, liability: liability.total, userCount: liability.count, priceUsd: prices.get(asset.symbol) ?? null });
-    } else if (!(liability.total === 0 && liability.count === 0)) {
-      cryptoAssets.push(asset);
+  let internal: (Liab & { priceUsd: number | null }) | null = null;
+  const toRead = (assets || []).filter((a) => {
+    const l = liab.get(a.symbol) || { total: 0, count: 0 };
+    if (INTERNAL_ONLY_ASSETS.has(a.symbol)) {
+      internal = { ...l, priceUsd: prices.get(a.symbol) ?? null };
+      return false;
     }
-  }
+    return !(l.total === 0 && l.count === 0);
+  });
 
-  const crypto = await Promise.all(
-    cryptoAssets.map(async (asset): Promise<CryptoRow> => {
-      const liability = liabilityMap.get(asset.symbol) || { total: 0, count: 0 };
+  const lines = await Promise.all(
+    toRead.map(async (asset): Promise<Line> => {
+      const owe = liab.get(asset.symbol)?.total ?? 0;
       const addresses = addrMap.get(asset.symbol) || [];
       const network = asset.network.toLowerCase();
       const decimals = asset.decimals || 18;
 
-      let onChain: number | null = null;
+      let treasury: number | null = null;
+      let users: number | null = null;
+      let usersFailed = 0;
       let error: string | undefined;
-      let unswept: number | null = null;
-      let unsweptFailed = 0;
-      let unsweptCount = 0;
 
-      const treasuryTask = (async () => {
-        try {
-          if (asset.symbol === "BTC") {
-            if (!TREASURY_BTC_ADDRESS) throw new Error("TREASURY_BTC_ADDRESS non configurée");
-            onChain = await getBtcBalance(TREASURY_BTC_ADDRESS);
-          } else if (asset.contract_address) {
-            if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-            onChain = await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, decimals);
-          } else {
-            if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-            onChain = await getNativeBalance(network, TREASURY_EVM_ADDRESS);
+      await Promise.all([
+        (async () => {
+          try {
+            if (asset.symbol === "BTC") {
+              if (!TREASURY_BTC_ADDRESS) throw new Error("TREASURY_BTC_ADDRESS non configurée");
+              treasury = await getBtcBalance(TREASURY_BTC_ADDRESS);
+            } else {
+              if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
+              treasury = asset.contract_address
+                ? await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, decimals)
+                : await getNativeBalance(network, TREASURY_EVM_ADDRESS);
+            }
+          } catch (e: any) {
+            error = e?.message || "Erreur inconnue";
           }
-        } catch (e: any) {
-          error = e?.message || "Erreur inconnue";
-        }
-      })();
+        })(),
+        (async () => {
+          try {
+            const r =
+              asset.symbol === "BTC"
+                ? await getBtcBalances(addresses)
+                : asset.contract_address
+                  ? await getTokenBalances(network, asset.contract_address, addresses, decimals)
+                  : await getNativeBalances(network, addresses);
+            users = r.total;
+            usersFailed = r.failed;
+          } catch {
+            users = null;
+            usersFailed = addresses.length;
+          }
+        })()
+      ]);
 
-      const usersTask = (async () => {
-        try {
-          const r =
-            asset.symbol === "BTC"
-              ? await getBtcBalances(addresses)
-              : asset.contract_address
-                ? await getTokenBalances(network, asset.contract_address, addresses, decimals)
-                : await getNativeBalances(network, addresses);
-          unswept = r.total;
-          unsweptFailed = r.failed;
-          unsweptCount = r.checked;
-        } catch {
-          unswept = null;
-          unsweptFailed = addresses.length;
-        }
-      })();
-
-      await Promise.all([treasuryTask, usersTask]);
+      const have = treasury !== null ? treasury + (users ?? 0) : null;
+      const noteParts: string[] = [];
+      if ((users ?? 0) > EPS) noteParts.push(`dont ${formatNumber(users ?? 0)} encore sur les adresses des utilisateurs`);
+      if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
 
       return {
         asset: asset.symbol,
-        network: asset.network,
-        onChain,
-        unswept,
-        unsweptCount,
-        unsweptFailed,
-        liability: liability.total,
-        userCount: liability.count,
+        label: `${asset.symbol} (${asset.network})`,
+        have,
+        owe,
+        note: noteParts.join(" · ") || undefined,
+        status: computeStatus(have, owe, treasury),
         priceUsd: prices.get(asset.symbol) ?? null,
-        depositsPaused: asset.can_be_deposited === false,
         error
       };
     })
   );
 
-  crypto.sort((a, b) => a.asset.localeCompare(b.asset));
-  internal.sort((a, b) => a.asset.localeCompare(b.asset));
-  return { crypto, internal };
+  lines.sort((a, b) => a.asset.localeCompare(b.asset));
+  return { lines, internal };
 }
 
-async function fetchPawapayBalances(): Promise<Map<string, number> | { error: string }> {
+interface Wallet {
+  country: string; // alpha-2
+  currency: string;
+  balance: number;
+}
+
+async function fetchPawapayWallets(): Promise<{ wallets: Wallet[]; error?: string }> {
   const secret = (process.env.DASHBOARD_API_SECRET || "").trim();
   const supabaseUrl = process.env.SUPABASE_URL;
-  if (!secret || !supabaseUrl) return { error: "DASHBOARD_API_SECRET ou SUPABASE_URL manquant" };
+  if (!secret || !supabaseUrl) return { wallets: [], error: "DASHBOARD_API_SECRET ou SUPABASE_URL manquant dans Vercel" };
 
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/dashboard-pawapay-balance`, {
       headers: { "x-dashboard-secret": secret },
       cache: "no-store"
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { error: body.error || `PawaPay balance endpoint a répondu ${res.status}` };
-    }
-    const data = await res.json();
-    const map = new Map<string, number>();
-    for (const b of data.balances || []) map.set(b.country, Number(b.balance));
-    return map;
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { wallets: [], error: body.error || `PawaPay a répondu ${res.status}` };
+    if (!Array.isArray(body.balances)) return { wallets: [], error: "Réponse PawaPay inattendue" };
+
+    const wallets: Wallet[] = body.balances.map((b: any) => ({
+      country: toAlpha2(String(b.country || "")),
+      currency: String(b.currency || ""),
+      balance: Number(b.balance) || 0
+    }));
+    return { wallets };
   } catch (e: any) {
-    return { error: e?.message || "Erreur réseau vers dashboard-pawapay-balance" };
+    return { wallets: [], error: e?.message || "Erreur réseau vers PawaPay" };
   }
 }
 
-async function loadFiat(liabilityMap: Map<string, Liab>): Promise<FiatRow[]> {
+async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; error?: string }> {
   const { data: countries, error } = await getSupabaseAdmin()
     .from("payment_countries")
     .select("iso_code, currency_code, wallet_asset_symbol")
     .eq("is_active", true);
-  if (error) throw new Error(`Erreur chargement pays: ${error.message}`);
+  if (error) throw new Error(`Impossible de lire les pays (${error.message})`);
 
-  const pawapay = await fetchPawapayBalances();
-  const globalError = "error" in pawapay ? pawapay.error : undefined;
-  const balances = "error" in pawapay ? new Map<string, number>() : pawapay;
+  const { wallets, error: pawapayError } = await fetchPawapayWallets();
 
-  return (countries || []).map((c) => {
-    const liab = liabilityMap.get(c.wallet_asset_symbol);
-    return {
-      asset: c.wallet_asset_symbol,
-      currency: c.currency_code,
-      country: c.iso_code,
-      pawapayBalance: balances.get(c.iso_code) ?? null,
-      liability: liab?.total || 0,
-      userCount: liab?.count || 0,
-      error: globalError
-    };
-  });
+  const byAsset = new Map<string, { iso: string; currency: string }[]>();
+  for (const c of countries || []) {
+    const list = byAsset.get(c.wallet_asset_symbol) || [];
+    list.push({ iso: String(c.iso_code).toUpperCase(), currency: c.currency_code });
+    byAsset.set(c.wallet_asset_symbol, list);
+  }
+
+  const lines: Line[] = [];
+  for (const [asset, list] of byAsset) {
+    const owe = liab.get(asset)?.total ?? 0;
+    const details = list.map((c) => ({
+      label: `${c.iso} (${c.currency})`,
+      value: wallets.filter((w) => w.country === c.iso).reduce((n, w) => n + w.balance, 0)
+    }));
+    const have = pawapayError ? null : details.reduce((n, d) => n + d.value, 0);
+    lines.push({
+      asset,
+      label: `${asset} (PawaPay)`,
+      have,
+      owe,
+      status: computeStatus(have, owe, null),
+      priceUsd: prices.get(asset) ?? null,
+      error: pawapayError,
+      details
+    });
+  }
+  lines.sort((a, b) => a.asset.localeCompare(b.asset));
+  return { lines, error: pawapayError };
 }
 
-async function loadFees(prices: Map<string, number>): Promise<{ rows: FeeRow[]; error?: string }> {
-  const { data, error } = await getSupabaseAdmin().rpc("get_platform_fees_totals");
-  if (error) return { rows: [], error: error.message };
-  const rows: FeeRow[] = ((data as any[]) || []).map((f) => ({
-    asset: f.asset_symbol,
-    count: Number(f.fee_count),
-    total: Number(f.total_fees),
-    priceUsd: prices.get(f.asset_symbol) ?? null
-  }));
-  rows.sort((a, b) => b.total * (b.priceUsd ?? 0) - a.total * (a.priceUsd ?? 0));
-  return { rows };
+// ─────────────────────────────────── Page ───────────────────────────────────
+
+const ok = (n: number | null) => (n === null ? "—" : formatNumber(n));
+
+function gap(l: Line): number | null {
+  return l.have === null ? null : l.have - l.owe;
 }
 
-export default async function TreasuryPage() {
-  let crypto: CryptoRow[] = [];
-  let internal: InternalRow[] = [];
-  let fiat: FiatRow[] = [];
+function usd(l: Line, amount: number): string {
+  return l.priceUsd !== null ? formatUsd(amount * l.priceUsd) : "";
+}
+
+export default async function SolvencyPage() {
+  let crypto: Line[] = [];
+  let mobile: Line[] = [];
+  let internal: (Liab & { priceUsd: number | null }) | null = null;
   let loadError: string | null = null;
 
   const prices = await loadPrices();
-  const feesPromise = loadFees(prices);
-
   try {
-    const liabilityMap = await loadLiabilities();
-    const [{ crypto: c, internal: i }, f] = await Promise.all([loadCryptoAndInternal(liabilityMap, prices), loadFiat(liabilityMap)]);
-    crypto = c;
-    internal = i;
-    fiat = f;
+    const liab = await loadLiabilities();
+    const [c, m] = await Promise.all([loadCrypto(liab, prices), loadMobileMoney(liab, prices)]);
+    crypto = c.lines;
+    internal = c.internal;
+    mobile = m.lines;
   } catch (e: any) {
     loadError = e?.message || "Erreur de chargement";
   }
-  const fees = await feesPromise;
+
+  const all = [...crypto, ...mobile];
+  const short = all.filter((l) => l.status === "short");
+  const errors = all.filter((l) => l.status === "error");
+  const toSweep = all.filter((l) => l.status === "sweep");
+  const missingUsd = short.reduce((n, l) => n + (l.priceUsd !== null ? -(gap(l) ?? 0) * l.priceUsd : 0), 0);
+
+  // Actions concrètes, en français simple
+  const todo: string[] = [];
+  for (const l of short) {
+    const missing = -(gap(l) ?? 0);
+    const u = usd(l, missing);
+    todo.push(
+      l.label.includes("PawaPay")
+        ? `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (≈ ${u})` : ""} chez PawaPay : approvisionne le compte marchand.`
+        : `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (≈ ${u})` : ""} : envoie-les sur l'adresse du treasury.`
+    );
+  }
+  for (const l of toSweep) todo.push(`${l.asset} : les fonds sont couverts, mais une partie est encore sur les adresses des utilisateurs (lance le balayage).`);
+  for (const l of errors) todo.push(`${l.label} : lecture impossible — ${l.error || "erreur inconnue"}.`);
+
+  const banner =
+    loadError || (all.length === 0 && errors.length === 0)
+      ? { tone: "#7f1d1d", color: "#fecaca", title: "Impossible de calculer la solvabilité", text: loadError || "Aucune donnée." }
+      : short.length > 0
+        ? { tone: "#7f1d1d", color: "#fecaca", title: "Il manque de l'argent", text: missingUsd > 0 ? `Il manque environ ${formatUsd(missingUsd)} au total pour couvrir tout le monde.` : "Certains actifs ne sont pas couverts." }
+        : errors.length > 0
+          ? { tone: "#78350f", color: "#fde68a", title: "Certaines lectures ont échoué", text: "Le reste est couvert, mais je n'ai pas pu vérifier tous les soldes." }
+          : { tone: "#14532d", color: "#bbf7d0", title: "Tout est couvert", text: "Tu détiens assez pour rembourser tous les utilisateurs." };
 
   return (
     <div>
-      <PageTitle
-        title="Treasury & Solvabilité"
-        subtitle="Compare les fonds réels (on-chain ou chez PawaPay) à ce qui est dû aux utilisateurs. Données rafraîchies à chaque chargement de page."
-      />
-      <ErrorBox text={loadError || undefined} />
+      <h1 style={{ color: "#f8fafc", marginBottom: "0.25rem" }}>Ai-je assez pour rembourser tout le monde ?</h1>
+      <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1.5rem", fontSize: "0.9rem" }}>
+        Chaque ligne compare l'argent réel que tu détiens à ce que tu dois aux utilisateurs. Actualisé à chaque chargement.
+      </p>
 
-      {(!TREASURY_EVM_ADDRESS || !TREASURY_BTC_ADDRESS) && (
-        <Alert tone="warn">⚠️ TREASURY_EVM_ADDRESS et/ou TREASURY_BTC_ADDRESS ne sont pas configurées.</Alert>
+      <div style={{ background: banner.tone, color: banner.color, padding: "1rem 1.25rem", borderRadius: "12px", marginBottom: "1.5rem" }}>
+        <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{banner.title}</div>
+        <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>{banner.text}</div>
+      </div>
+
+      {todo.length > 0 && (
+        <div style={{ background: "#1e293b", borderRadius: "12px", padding: "1rem 1.25rem", marginBottom: "1.5rem" }}>
+          <div style={{ color: "#f8fafc", fontWeight: 600, marginBottom: "0.5rem" }}>À faire</div>
+          <ul style={{ color: "#cbd5e1", fontSize: "0.9rem", margin: 0, paddingLeft: "1.2rem", lineHeight: 1.7 }}>
+            {todo.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
-      <SectionTitle hint="Total on-chain = adresse du treasury + adresses de dépôt des utilisateurs (fonds pas encore balayés).">
-        Crypto (on-chain)
-      </SectionTitle>
-      <CryptoTable rows={crypto} />
+      <Section title="Crypto" hint="J'ai = treasury + fonds encore sur les adresses des utilisateurs.">
+        <LinesTable lines={crypto} empty="Aucune crypto due aux utilisateurs." />
+      </Section>
 
-      <SectionTitle>Fiat (via PawaPay)</SectionTitle>
-      <FiatTable rows={fiat} />
+      <Section title="Argent mobile (PawaPay)" hint="J'ai = solde de ton compte marchand PawaPay, tous pays du même actif additionnés.">
+        <LinesTable lines={mobile} empty="Aucun pays actif." />
+      </Section>
 
-      <SectionTitle hint="Aucune réserve on-chain suivie ici pour ces tokens.">Tokens internes</SectionTitle>
-      <InternalTable rows={internal} />
-
-      <SectionTitle hint="Total des frais collectés depuis le début. Les frais de test et les pertes nettes de jeu sont exclus.">
-        Frais de la plateforme
-      </SectionTitle>
-      <ErrorBox text={fees.error} />
-      <FeesTable rows={fees.rows} />
-
-      <p style={{ color: "#64748b", fontSize: "0.8rem", marginTop: "1.5rem" }}>
-        <strong>Déficit</strong> : même en additionnant tout, il y a moins on-chain que ce qui est dû — à traiter en priorité.{" "}
-        <strong>À balayer</strong> : le total couvre le dû, mais une partie des fonds est encore sur les adresses des utilisateurs.
-        Un total supérieur au passif est normal (marge, frais non encore retirés).
-      </p>
+      {internal && (
+        <Section title="Token WAKATI" hint="Géré en interne : aucune réserve à couvrir ici.">
+          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "1rem 1.25rem", color: "#cbd5e1", fontSize: "0.9rem" }}>
+            Tu dois <strong style={{ color: "#f8fafc" }}>{formatNumber(internal.total)} WAKATI</strong> à {internal.count} utilisateur(s)
+            {internal.priceUsd !== null ? ` (≈ ${formatUsd(internal.total * internal.priceUsd)}).` : "."}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
 
-function CryptoTable({ rows }: { rows: CryptoRow[] }) {
-  if (rows.length === 0) return <EmptyState text="Aucun actif crypto avec un passif." />;
-  const EPS = 0.00000001;
+function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: "2rem" }}>
+      <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: 0 }}>{title}</h2>
+      {hint && <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0.2rem 0 0.75rem" }}>{hint}</p>}
+      {children}
+    </div>
+  );
+}
+
+function StatusBadge({ s }: { s: Status }) {
+  if (s === "covered") return <Badge tone="ok">Couvert</Badge>;
+  if (s === "sweep") return <Badge tone="warn">À balayer</Badge>;
+  if (s === "short") return <Badge tone="bad">Il manque</Badge>;
+  return <Badge tone="bad">Erreur</Badge>;
+}
+
+function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
+  if (lines.length === 0) return <EmptyState text={empty} />;
   return (
     <TableShell>
       <thead>
         <tr style={{ background: "#0f172a" }}>
           <Th>Actif</Th>
-          <Th>Réseau</Th>
-          <Th align="right">Treasury</Th>
-          <Th align="right">Adresses utilisateurs</Th>
-          <Th align="right">Total on-chain</Th>
-          <Th align="right">Dû aux utilisateurs</Th>
+          <Th align="right">J'ai</Th>
+          <Th align="right">Je dois</Th>
           <Th align="right">Écart</Th>
-          <Th align="right">Écart (USD)</Th>
-          <Th align="right">Utilisateurs</Th>
-          <Th>Statut</Th>
+          <Th>Résultat</Th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => {
-          const total = row.onChain !== null ? row.onChain + (row.unswept ?? 0) : null;
-          const diff = total !== null ? total - row.liability : null;
-          const treasuryDiff = row.onChain !== null ? row.onChain - row.liability : null;
-          const isShortfall = diff !== null && diff < -EPS;
-          const toSweep = !isShortfall && treasuryDiff !== null && treasuryDiff < -EPS;
-          const partial = row.unswept === null || row.unsweptFailed > 0;
-          const color = isShortfall ? "#f87171" : "#4ade80";
-
+        {lines.map((l) => {
+          const g = gap(l);
+          const isShort = l.status === "short";
           return (
-            <tr key={row.asset} style={{ borderTop: "1px solid #334155" }}>
+            <tr key={l.label} style={{ borderTop: "1px solid #334155", verticalAlign: "top" }}>
               <Td>
-                <strong style={{ color: "#f8fafc" }}>{row.asset}</strong>
-                {row.depositsPaused && (
-                  <div>
-                    <Badge tone="warn">dépôts suspendus</Badge>
-                  </div>
-                )}
-              </Td>
-              <Td>{row.network}</Td>
-              <Td align="right">
-                {row.error ? <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{row.error}</span> : formatNumber(row.onChain ?? 0)}
-              </Td>
-              <Td align="right">
-                {row.unswept === null ? (
-                  <span style={{ color: "#f87171", fontSize: "0.8rem" }}>Lecture impossible</span>
-                ) : (
-                  <>
-                    {formatNumber(row.unswept)}
-                    <div style={{ color: "#64748b", fontSize: "0.7rem" }}>
-                      {row.unsweptCount} adresse{row.unsweptCount > 1 ? "s" : ""}
-                      {row.unsweptFailed > 0 ? ` · ${row.unsweptFailed} illisible${row.unsweptFailed > 1 ? "s" : ""}` : ""}
+                <strong style={{ color: "#f8fafc" }}>{l.label}</strong>
+                {l.details && l.details.length > 0 && (
+                  <details style={{ marginTop: "0.25rem" }}>
+                    <summary style={{ color: "#64748b", fontSize: "0.75rem", cursor: "pointer" }}>détail par pays</summary>
+                    <div style={{ color: "#94a3b8", fontSize: "0.75rem", lineHeight: 1.6 }}>
+                      {l.details.map((d) => (
+                        <div key={d.label}>
+                          {d.label} : {formatNumber(d.value)}
+                        </div>
+                      ))}
                     </div>
-                  </>
-                )}
-              </Td>
-              <Td align="right">{total !== null ? formatNumber(total) : "—"}</Td>
-              <Td align="right">{formatNumber(row.liability)}</Td>
-              <Td align="right">
-                {diff !== null ? (
-                  <span style={{ color }}>
-                    {diff >= 0 ? "+" : ""}
-                    {formatNumber(diff)}
-                  </span>
-                ) : (
-                  "—"
+                  </details>
                 )}
               </Td>
               <Td align="right">
-                {diff !== null && row.priceUsd !== null ? (
-                  <span style={{ color }}>
-                    {diff >= 0 ? "+" : ""}
-                    {formatUsd(diff * row.priceUsd)}
-                  </span>
-                ) : (
+                {l.error ? <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{l.error}</span> : ok(l.have)}
+                {l.note && <div style={{ color: "#64748b", fontSize: "0.7rem" }}>{l.note}</div>}
+              </Td>
+              <Td align="right">{formatNumber(l.owe)}</Td>
+              <Td align="right">
+                {g === null ? (
                   "—"
+                ) : (
+                  <span style={{ color: isShort ? "#f87171" : "#4ade80" }}>
+                    {g >= 0 ? "+" : ""}
+                    {formatNumber(g)}
+                    {usd(l, g) && <div style={{ fontSize: "0.7rem", opacity: 0.8 }}>{g >= 0 ? "+" : ""}{usd(l, g)}</div>}
+                  </span>
                 )}
               </Td>
-              <Td align="right">{row.userCount}</Td>
               <Td>
-                {row.error ? (
-                  <Badge tone="bad">Erreur</Badge>
-                ) : isShortfall ? (
-                  <Badge tone="bad">⚠ Déficit</Badge>
-                ) : toSweep ? (
-                  <Badge tone="warn">À balayer</Badge>
-                ) : (
-                  <Badge tone="ok">OK</Badge>
-                )}
-                {partial && !row.error && <div style={{ color: "#fbbf24", fontSize: "0.7rem", marginTop: "0.25rem" }}>lecture partielle</div>}
+                <StatusBadge s={l.status} />
               </Td>
             </tr>
           );
         })}
-      </tbody>
-    </TableShell>
-  );
-}
-
-function FiatTable({ rows }: { rows: FiatRow[] }) {
-  if (rows.length === 0) return <EmptyState text="Aucun pays fiat actif." />;
-
-  // Un même actif wallet (ex. FCFA) est financé par plusieurs pays/devises (XAF, XOF, parité fixe 1:1) :
-  // on additionne les soldes PawaPay pour le comparer au dû total de l'actif.
-  const totals = new Map<string, { balance: number; liability: number; hasBalance: boolean; currencies: string[] }>();
-  for (const r of rows) {
-    const t = totals.get(r.asset) || { balance: 0, liability: r.liability, hasBalance: false, currencies: [] };
-    if (r.pawapayBalance !== null) {
-      t.balance += r.pawapayBalance;
-      t.hasBalance = true;
-    }
-    if (!t.currencies.includes(r.currency)) t.currencies.push(r.currency);
-    totals.set(r.asset, t);
-  }
-  return (
-    <TableShell>
-      <thead>
-        <tr style={{ background: "#0f172a" }}>
-          <Th>Pays</Th>
-          <Th>Devise</Th>
-          <Th>Actif wallet</Th>
-          <Th align="right">Solde chez PawaPay</Th>
-          <Th align="right">Dû aux utilisateurs (actif global)</Th>
-          <Th>Statut</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.country} style={{ borderTop: "1px solid #334155" }}>
-            <Td><strong style={{ color: "#f8fafc" }}>{row.country}</strong></Td>
-            <Td>{row.currency}</Td>
-            <Td>{row.asset}</Td>
-            <Td align="right">
-              {row.error ? (
-                <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{row.error}</span>
-              ) : row.pawapayBalance !== null ? (
-                formatNumber(row.pawapayBalance)
-              ) : (
-                "—"
-              )}
-            </Td>
-            <Td align="right">{formatNumber(row.liability)}</Td>
-            <Td>{row.error ? <Badge tone="bad">Erreur</Badge> : <Badge tone="info">Info</Badge>}</Td>
-          </tr>
-        ))}
-              {[...totals.entries()].map(([asset, t]) => {
-          const shortfall = t.hasBalance && t.balance < t.liability - 0.00000001;
-          return (
-            <tr key={`total-${asset}`} style={{ borderTop: "1px solid #334155", background: "#0f172a" }}>
-              <Td><strong style={{ color: "#f8fafc" }}>Total {asset}</strong></Td>
-              <Td>{t.currencies.join(" + ")}</Td>
-              <Td>{asset}</Td>
-              <Td align="right">{t.hasBalance ? formatNumber(t.balance) : "—"}</Td>
-              <Td align="right">{formatNumber(t.liability)}</Td>
-              <Td>{!t.hasBalance ? <Badge tone="info">Info</Badge> : shortfall ? <Badge tone="bad">⚠ Déficit</Badge> : <Badge tone="ok">OK</Badge>}</Td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </TableShell>
-  );
-}
-
-function InternalTable({ rows }: { rows: InternalRow[] }) {
-  if (rows.length === 0) return <EmptyState text="Aucun token interne." />;
-  return (
-    <TableShell>
-      <thead>
-        <tr style={{ background: "#0f172a" }}>
-          <Th>Actif</Th>
-          <Th align="right">Dû aux utilisateurs</Th>
-          <Th align="right">Valeur (USD)</Th>
-          <Th align="right">Utilisateurs</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.asset} style={{ borderTop: "1px solid #334155" }}>
-            <Td><strong style={{ color: "#f8fafc" }}>{row.asset}</strong></Td>
-            <Td align="right">{formatNumber(row.liability)}</Td>
-            <Td align="right">{row.priceUsd !== null ? formatUsd(row.liability * row.priceUsd) : "—"}</Td>
-            <Td align="right">{row.userCount}</Td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
-  );
-}
-
-function FeesTable({ rows }: { rows: FeeRow[] }) {
-  if (rows.length === 0) return <EmptyState text="Aucun frais collecté." />;
-  const totalUsd = rows.reduce((n, f) => n + (f.priceUsd !== null ? f.total * f.priceUsd : 0), 0);
-  return (
-    <TableShell>
-      <thead>
-        <tr style={{ background: "#0f172a" }}>
-          <Th>Actif</Th>
-          <Th align="right">Frais collectés</Th>
-          <Th align="right">Nombre</Th>
-          <Th align="right">Valeur (USD)</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((f) => (
-          <tr key={f.asset} style={{ borderTop: "1px solid #334155" }}>
-            <Td><strong style={{ color: "#f8fafc" }}>{f.asset}</strong></Td>
-            <Td align="right">{formatNumber(f.total)}</Td>
-            <Td align="right">{f.count}</Td>
-            <Td align="right">{f.priceUsd !== null ? formatUsd(f.total * f.priceUsd) : "—"}</Td>
-          </tr>
-        ))}
-        <tr style={{ borderTop: "1px solid #334155", background: "#0f172a" }}>
-          <Td><strong style={{ color: "#f8fafc" }}>Total</strong></Td>
-          <Td align="right">—</Td>
-          <Td align="right">{rows.reduce((n, f) => n + f.count, 0)}</Td>
-          <Td align="right"><strong style={{ color: "#f8fafc" }}>{formatUsd(totalUsd)}</strong></Td>
-        </tr>
       </tbody>
     </TableShell>
   );

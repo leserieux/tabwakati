@@ -26,15 +26,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       >
         <div style={{ display: "flex", alignItems: "center", gap: "2rem" }}>
           <strong style={{ color: "#f8fafc", fontSize: "1.1rem" }}>Wakati Dashboard</strong>
-          <nav style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
+          <nav style={{ display: "flex", gap: "1.5rem" }}>
             {[
-              ["/dashboard/overview", "Vue d'ensemble"],
-              ["/dashboard/treasury", "Treasury & Solvabilité"],
-              ["/dashboard/operations", "Opérations"],
-              ["/dashboard/users", "Utilisateurs"],
-              ["/dashboard/risks", "Risques"]
+              ["/dashboard/treasury", "Solvabilité"],
+              ["/dashboard/activity", "Activité"]
             ].map(([href, label]) => (
-              <a key={href} href={href} style={{ color: "#94a3b8", textDecoration: "none", fontSize: "0.9rem" }}>
+              <a key={href} href={href} style={{ color: "#cbd5e1", textDecoration: "none", fontSize: "0.95rem" }}>
                 {label}
               </a>
             ))}
