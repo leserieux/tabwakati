@@ -177,7 +177,7 @@ async function loadCryptoAndInternal(
 }
 
 async function fetchPawapayBalances(): Promise<Map<string, number> | { error: string }> {
-  const secret = process.env.DASHBOARD_API_SECRET;
+  const secret = (process.env.DASHBOARD_API_SECRET || "").trim();
   const supabaseUrl = process.env.SUPABASE_URL;
   if (!secret || !supabaseUrl) return { error: "DASHBOARD_API_SECRET ou SUPABASE_URL manquant" };
 
@@ -396,6 +396,19 @@ function CryptoTable({ rows }: { rows: CryptoRow[] }) {
 
 function FiatTable({ rows }: { rows: FiatRow[] }) {
   if (rows.length === 0) return <EmptyState text="Aucun pays fiat actif." />;
+
+  // Un même actif wallet (ex. FCFA) est financé par plusieurs pays/devises (XAF, XOF, parité fixe 1:1) :
+  // on additionne les soldes PawaPay pour le comparer au dû total de l'actif.
+  const totals = new Map<string, { balance: number; liability: number; hasBalance: boolean; currencies: string[] }>();
+  for (const r of rows) {
+    const t = totals.get(r.asset) || { balance: 0, liability: r.liability, hasBalance: false, currencies: [] };
+    if (r.pawapayBalance !== null) {
+      t.balance += r.pawapayBalance;
+      t.hasBalance = true;
+    }
+    if (!t.currencies.includes(r.currency)) t.currencies.push(r.currency);
+    totals.set(r.asset, t);
+  }
   return (
     <TableShell>
       <thead>
@@ -427,6 +440,19 @@ function FiatTable({ rows }: { rows: FiatRow[] }) {
             <Td>{row.error ? <Badge tone="bad">Erreur</Badge> : <Badge tone="info">Info</Badge>}</Td>
           </tr>
         ))}
+              {[...totals.entries()].map(([asset, t]) => {
+          const shortfall = t.hasBalance && t.balance < t.liability - 0.00000001;
+          return (
+            <tr key={`total-${asset}`} style={{ borderTop: "1px solid #334155", background: "#0f172a" }}>
+              <Td><strong style={{ color: "#f8fafc" }}>Total {asset}</strong></Td>
+              <Td>{t.currencies.join(" + ")}</Td>
+              <Td>{asset}</Td>
+              <Td align="right">{t.hasBalance ? formatNumber(t.balance) : "—"}</Td>
+              <Td align="right">{formatNumber(t.liability)}</Td>
+              <Td>{!t.hasBalance ? <Badge tone="info">Info</Badge> : shortfall ? <Badge tone="bad">⚠ Déficit</Badge> : <Badge tone="ok">OK</Badge>}</Td>
+            </tr>
+          );
+        })}
       </tbody>
     </TableShell>
   );
