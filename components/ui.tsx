@@ -3,7 +3,7 @@ import { formatPct } from "@/lib/format";
 
 export type Tone = "ok" | "warn" | "bad" | "info";
 
-type IconName = "check" | "alert" | "x" | "clock" | "refresh" | "shield" | "activity";
+type IconName = "check" | "alert" | "x" | "clock" | "refresh" | "shield" | "activity" | "coin" | "price" | "layers" | "users";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -22,6 +22,14 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       return (<svg {...common}><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /></svg>);
     case "activity":
       return (<svg {...common}><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>);
+    case "coin":
+      return (<svg {...common}><circle cx="12" cy="12" r="9" /><path d="M8.2 9.5l1.6 5 2.2-4.2 2.2 4.2 1.6-5" /></svg>);
+    case "price":
+      return (<svg {...common}><path d="M4 17l5-5 4 3 7-8" /><path d="M15 7h5v5" /></svg>);
+    case "layers":
+      return (<svg {...common}><path d="M12 4l9 5-9 5-9-5z" /><path d="M3 14l9 5 9-5" /></svg>);
+    case "users":
+      return (<svg {...common}><circle cx="9" cy="9" r="3.2" /><path d="M3.5 19c.6-3 3-4.5 5.5-4.5s4.9 1.5 5.5 4.5" /><path d="M16 6.3a3 3 0 0 1 0 5.6M18.2 14.6c1.6.6 2.6 2 3 4.4" /></svg>);
   }
 }
 
@@ -106,4 +114,30 @@ export function Empty({ text }: { text: string }) {
 export function ErrorNote({ text }: { text?: string | null }) {
   if (!text) return null;
   return <div className="wk-alert-bad">{text}</div>;
+}
+
+/** Couleurs des segments de l'offre WAKATI. */
+export const SEG = {
+  reserve: "#b7d3d8",
+  available: "#0b5563",
+  staking: "#2f8f83",
+  pending: "#d8a24a",
+  external: "#6b7fc4",
+  burned: "#3a4556"
+};
+
+/** Barre segmentée : chaque segment est proportionnel à sa valeur (largeur minimale visible). */
+export function SegmentBar({ segments, label }: { segments: { key: string; label: string; value: number; color: string }[]; label: string }) {
+  const visible = segments.filter((s) => s.value > 0);
+  return (
+    <div className="wk-supply" role="img" aria-label={label}>
+      {visible.map((s) => (
+        <div key={s.key} className="wk-supply-seg" style={{ flexGrow: s.value, background: s.color }} title={s.label} />
+      ))}
+    </div>
+  );
+}
+
+export function Swatch({ color }: { color: string }) {
+  return <span className="wk-swatch" style={{ background: color }} />;
 }

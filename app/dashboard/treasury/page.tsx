@@ -8,7 +8,7 @@ import {
   getBtcBalances
 } from "@/lib/chain";
 import { toAlpha2 } from "@/lib/countries";
-import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
+import { formatNumber, formatToken, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, Icon } from "@/components/ui";
 
 export const runtime = "nodejs";
@@ -56,7 +56,7 @@ function computeStatus(have: number | null, owe: number, treasuryOnly: number | 
   return "covered";
 }
 
-async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; internal: Liab & { priceUsd: number | null } | null }> {
+async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; internal: Line | null }> {
   const db = getSupabaseAdmin();
   const [{ data: assets, error: assetsError }, { data: userAddrs }] = await Promise.all([
     db.from("supported_assets").select("symbol, network, contract_address, decimals").neq("network", "Fiat").eq("is_active", true),
@@ -73,11 +73,13 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
     addrMap.set(a.asset_symbol, list);
   }
 
-  let internal: (Liab & { priceUsd: number | null }) | null = null;
+  let internalAsset: any = null;
+  let internalLiab: Liab = { total: 0, count: 0 };
   const toRead = (assets || []).filter((a) => {
     const l = liab.get(a.symbol) || { total: 0, count: 0 };
     if (INTERNAL_ONLY_ASSETS.has(a.symbol)) {
-      internal = { ...l, priceUsd: prices.get(a.symbol) ?? null };
+      internalAsset = a;
+      internalLiab = l;
       return false;
     }
     return !(l.total === 0 && l.count === 0);
@@ -147,6 +149,30 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
   );
 
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
+
+  // WAKATI : token interne. Pas de prix de marché, mais la trésorerie doit détenir assez de tokens sur la blockchain.
+  let internal: Line | null = null;
+  if (internalAsset) {
+    let onChain: number | null = null;
+    let err: string | undefined;
+    try {
+      if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
+      if (!internalAsset.contract_address) throw new Error("adresse du contrat introuvable");
+      onChain = await getTokenBalance(internalAsset.network.toLowerCase(), internalAsset.contract_address, TREASURY_EVM_ADDRESS, internalAsset.decimals || 18);
+    } catch (e: any) {
+      err = e?.message || "Erreur inconnue";
+    }
+    internal = {
+      asset: "WAKATI",
+      label: `WAKATI (${internalAsset.network})`,
+      have: onChain,
+      owe: internalLiab.total,
+      note: `dû à ${internalLiab.count} utilisateur${internalLiab.count > 1 ? "s" : ""}`,
+      status: computeStatus(onChain, internalLiab.total, onChain),
+      priceUsd: null,
+      error: err
+    };
+  }
   return { lines, internal };
 }
 
@@ -248,7 +274,7 @@ function usd(l: Line, amount: number): string {
 export default async function SolvencyPage() {
   let crypto: Line[] = [];
   let mobile: Line[] = [];
-  let internal: (Liab & { priceUsd: number | null }) | null = null;
+  let internal: Line | null = null;
   let loadError: string | null = null;
 
   const prices = await loadPrices();
@@ -392,11 +418,11 @@ export default async function SolvencyPage() {
       </Section>
 
       {internal && (
-        <Section title="WAKATI" hint="Token géré en interne : il n'y a pas de réserve à couvrir.">
-          <div className="wk-note-box">
-            Tu dois <strong>{formatNumber(internal.total)} WAKATI</strong> à {internal.count} utilisateur{internal.count > 1 ? "s" : ""}
-            {internal.priceUsd !== null ? `, soit environ ${formatUsd(internal.total * internal.priceUsd)}.` : "."}
-          </div>
+        <Section title="WAKATI" hint="Token interne : son prix est fixé par ta réserve, donc il n'entre pas dans les totaux en dollars. Ce qui compte : la trésorerie doit détenir sur la blockchain au moins autant de tokens que ce qui est dû aux utilisateurs.">
+          <LinesTable lines={[internal]} empty="" />
+          <p style={{ margin: "12px 0 0", fontSize: 14 }}>
+            <a className="wk-link" href="/dashboard/wakati">Voir la tokenomics complète de WAKATI</a>
+          </p>
         </Section>
       )}
     </div>
@@ -410,6 +436,8 @@ function StatusPill({ s }: { s: Status }) {
   if (s === "short") return <Pill tone="bad">Il manque</Pill>;
   return <Pill tone="bad">Erreur</Pill>;
 }
+
+const fmt = (l: Line, n: number) => (l.asset === "WAKATI" ? formatToken(n) : formatNumber(n));
 
 function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
   if (lines.length === 0) return <Empty text={empty} />;
@@ -442,7 +470,7 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
                     <div className="wk-details-body">
                       {l.details.map((d) => (
                         <div key={d.label}>
-                          {d.label} : {formatNumber(d.value)}
+                          {d.label} : {fmt(l, d.value)}
                         </div>
                       ))}
                     </div>
@@ -450,10 +478,10 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
                 )}
               </Td>
               <Td right label="J'ai">
-                {l.error ? <span className="wk-err">{l.error}</span> : l.have === null ? "—" : formatNumber(l.have)}
+                {l.error ? <span className="wk-err">{l.error}</span> : l.have === null ? "—" : fmt(l, l.have)}
                 {l.note && <div className="wk-note">{l.note}</div>}
               </Td>
-              <Td right label="Je dois">{formatNumber(l.owe)}</Td>
+              <Td right label="Je dois">{fmt(l, l.owe)}</Td>
               <Td hideSm>{l.have === null ? <span className="wk-usd">—</span> : <CoverageBar ratio={ratio(l)} tone={tone(l.status)} />}</Td>
               <Td right label="Écart">
                 {g === null ? (
@@ -462,7 +490,7 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
                   <>
                     <span className={negative ? "wk-neg" : "wk-pos"}>
                       {g >= 0 ? "+" : ""}
-                      {formatNumber(g)}
+                      {fmt(l, g)}
                     </span>
                     {usd(l, g) && (
                       <div className="wk-usd">

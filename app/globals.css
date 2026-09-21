@@ -64,7 +64,9 @@ a { color: inherit; }
 .wk-brand-name { color: #fff; font-weight: 600; font-size: 16px; line-height: 1.2; }
 .wk-brand-sub { color: #8b99ac; font-size: 12px; }
 
-.wk-nav { display: flex; flex-direction: column; gap: 2px; }
+.wk-nav { display: flex; flex-direction: column; gap: 18px; }
+.wk-navgroup { display: flex; flex-direction: column; gap: 2px; }
+.wk-navgroup-label { color: #7f8ea3; font-size: 12.5px; padding: 0 10px 4px; }
 .wk-navlink {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 8px;
@@ -229,11 +231,50 @@ a { color: inherit; }
 .wk-submit:disabled { opacity: 0.6; cursor: default; }
 .wk-form-error { color: var(--bad); font-size: 13.5px; margin: 10px 0 0; }
 
+/* ───────── Token WAKATI ───────── */
+.wk-token { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; }
+.wk-token-mark { width: 52px; height: 52px; border-radius: 14px; background: var(--ink); color: var(--accent-light); display: grid; place-items: center; font-size: 26px; font-weight: 600; flex: none; }
+.wk-token-id { flex: 1 1 260px; min-width: 0; }
+.wk-token-name { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wk-token-net { font-size: 12.5px; font-weight: 500; color: var(--muted); background: var(--info-bg); padding: 2px 9px; border-radius: 999px; }
+.wk-token-sub { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+.wk-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.wk-link:hover { text-decoration: underline; }
+.wk-token-price { text-align: right; }
+.wk-token-price-label { color: var(--muted); font-size: 13px; }
+.wk-token-price-value { font-size: 24px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.wk-token-price-sub { font-size: 13px; color: var(--muted); }
+.wk-token-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wk-updated { color: var(--muted); font-size: 12.5px; }
+
+.wk-supply { display: flex; gap: 2px; height: 26px; border-radius: 8px; overflow: hidden; background: var(--info-bg); }
+.wk-supply-seg { flex-basis: 0; min-width: 5px; }
+.wk-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 9px; vertical-align: -1px; flex: none; }
+.wk-legend-name { display: flex; align-items: center; font-weight: 500; color: var(--ink); }
+.wk-legend-desc { color: var(--muted); font-size: 12.5px; margin: 1px 0 0 20px; font-weight: 400; max-width: 46ch; }
+
+.wk-callout { border-radius: 12px; padding: 16px 20px; border: 1px solid var(--line); background: var(--surface); font-size: 14.5px; }
+.wk-callout-warn { background: var(--warn-bg); border-color: #efd3ad; color: #5a3406; }
+.wk-callout-ok { background: var(--ok-bg); border-color: #bfe0cd; color: #10492f; }
+.wk-callout-bad { background: var(--bad-bg); border-color: #f0c3bf; color: #6d1710; }
+.wk-callout strong { font-weight: 600; }
+
+.wk-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.wk-kv { display: grid; gap: 10px; }
+.wk-kv-row { display: flex; justify-content: space-between; gap: 16px; font-size: 14.5px; }
+.wk-kv-row span:first-child { color: var(--muted); }
+.wk-kv-row span:last-child { color: var(--ink); font-weight: 500; text-align: right; }
+
+.wk-formula { font-size: 15px; line-height: 1.7; }
+.wk-formula code { background: var(--info-bg); padding: 2px 8px; border-radius: 6px; font-family: inherit; font-weight: 500; color: var(--ink); }
+
 /* ───────── Responsive ───────── */
 @media (max-width: 960px) {
   .wk-shell { grid-template-columns: 1fr; }
   .wk-side { position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 14px 18px; gap: 14px; }
-  .wk-nav { flex-direction: row; }
+  .wk-nav { flex-direction: row; flex-wrap: wrap; gap: 8px 18px; }
+  .wk-navgroup { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .wk-navgroup-label { display: none; }
   .wk-side-foot { margin-top: 0; margin-left: auto; padding: 0; }
   .wk-brand-sub { display: none; }
   .wk-main { padding: 24px 18px 48px; }
@@ -241,6 +282,8 @@ a { color: inherit; }
   .wk-strip-item:nth-child(3) { border-left: none; }
   .wk-strip-item:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .wk-cols { grid-template-columns: 1fr; }
+  .wk-grid-2 { grid-template-columns: 1fr; }
+  .wk-token-price { text-align: left; }
   .wk-figures { width: 100%; }
   .wk-login { grid-template-columns: 1fr; }
   .wk-login-art { display: none; }
@@ -261,7 +304,7 @@ a { color: inherit; }
   .wk-table tr:last-child { border-bottom: none; }
   .wk-table .wk-td { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; border: none; padding: 4px 0; text-align: right; }
   .wk-table .wk-td::before { content: attr(data-label); color: var(--muted); font-size: 13px; text-align: left; flex: none; }
-  .wk-table .wk-td[data-label=""] { justify-content: flex-start; text-align: left; }
+  .wk-table .wk-td[data-label=""] { justify-content: flex-start; text-align: left; flex-direction: column; align-items: flex-start; gap: 2px; }
   .wk-table .wk-td[data-label=""]::before { display: none; }
   .wk-table .wk-hide-sm { display: none; }
 }

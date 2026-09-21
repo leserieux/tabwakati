@@ -221,3 +221,10 @@ export async function getBtcBalances(addresses: string[]): Promise<MultiBalance>
   }
   return { total, checked, failed };
 }
+
+/** Offre totale d'un token ERC20 (totalSupply), en unité "humaine". */
+export async function getTokenTotalSupply(network: string, contractAddress: string, decimals: number): Promise<number> {
+  const hex = await rpcCall(network, "eth_call", [{ to: contractAddress, data: "0x18160ddd" }, "latest"]);
+  if (!hex || hex === "0x") return 0;
+  return formatUnits(hexToBigInt(hex), decimals);
+}
