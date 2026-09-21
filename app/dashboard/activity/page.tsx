@@ -155,11 +155,11 @@ export default async function ActivityPage() {
       <div className="wk-section wk-cols">
         <div>
           <div className="wk-section-head">
-            <h2 className="wk-h2">Transactions à vérifier</h2>
-            <p className="wk-hint">En attente, ou en échec cette semaine (les 15 plus récentes).</p>
+            <h2 className="wk-h2">Transactions réussies</h2>
+            <p className="wk-hint">Dépôts réussis, en attente et en échec cette semaine (les 15 plus récentes).</p>
           </div>
           {toCheck.rows.length === 0 ? (
-            <Empty text="Aucune transaction à vérifier." />
+            <Empty text="Aucune transaction réussie ou à vérifier." />
           ) : (
             <TableWrap>
               <thead>
