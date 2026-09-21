@@ -6,20 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DAY = 24 * 3600 * 1000;
-
-const TYPE_LABELS: Record<string, string> = {
-  deposit: "Dépôt",
-  withdrawal: "Retrait",
-  swap_debit: "Échange (débit)",
-  swap_credit: "Échange (crédit)",
-  staking_lock: "Verrouillage staking",
-  unstake: "Déblocage staking",
-  unstake_request: "Demande de déblocage",
-  staking_reward: "Récompense staking",
-  game_win: "Gain au jeu",
-  loan_disbursement: "Prêt versé",
-  loan_repayment: "Remboursement de prêt"
-};
+const SUCCESS_STATUSES = ["completed", "succeeded", "success", "successful"];
+const TYPE_LABELS: Record<string, string> = { deposit: "Dépôt", withdrawal: "Retrait", swap_debit: "Échange (débit)", swap_credit: "Échange (crédit)", staking_lock: "Verrouillage staking", unstake: "Déblocage staking", unstake_request: "Demande de déblocage", staking_reward: "Récompense staking", game_win: "Gain au jeu", loan_disbursement: "Prêt versé", loan_repayment: "Remboursement de prêt" };
 
 export default async function ActivityPage() {
   const db = getSupabaseAdmin();
@@ -27,242 +15,26 @@ export default async function ActivityPage() {
   const since7d = new Date(now - 7 * DAY).toISOString();
   const since24h = new Date(now - DAY).toISOString();
   const stuckBefore = new Date(now - 3600 * 1000).toISOString();
-
   const [prices, users, txs, loans, recon, fees, paused, stuck, failed24h, sweepFails, toCheck] = await Promise.all([
-    loadPrices(),
-    q<any>(db.from("admin_users_overview").select("last_activity_at, created_at")),
-    q<any>(db.from("admin_transactions_overview").select("day, transaction_count, total_amount_usd").gte("day", new Date(now - 6 * DAY).toISOString().slice(0, 10))),
-    q<any>(db.from("admin_loans_dashboard").select("prets_a_risque")),
-    db.rpc("get_admin_reconciliation"),
-    db.rpc("get_platform_fees_totals"),
-    q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false)),
-    q<any>(db.from("transactions").select("id").in("status", ["pending", "processing"]).lt("created_at", stuckBefore)),
-    q<any>(db.from("transactions").select("id").eq("status", "failed").gte("created_at", since24h)),
-    q<any>(db.from("sweep_log").select("id").neq("status", "swept").eq("dry_run", false).gte("created_at", since7d)),
-    q<any>(
-      db
-        .from("transactions")
-        .select("id, user_id, type, status, asset_symbol, amount, created_at")
-        .or(`status.in.(pending,processing,completed,succeeded,success,successful),and(status.eq.failed,created_at.gte.${since7d})`)
-        .order("created_at", { ascending: false })
-        .limit(15)
-    )
+    loadPrices(), q<any>(db.from("admin_users_overview").select("last_activity_at, created_at")), q<any>(db.from("admin_transactions_overview").select("day, transaction_count, total_amount_usd").gte("day", new Date(now - 6 * DAY).toISOString().slice(0, 10))), q<any>(db.from("admin_loans_dashboard").select("prets_a_risque")), db.rpc("get_admin_reconciliation"), db.rpc("get_platform_fees_totals"), q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false)), q<any>(db.from("transactions").select("id").in("status", ["pending", "processing"]).lt("created_at", stuckBefore)), q<any>(db.from("transactions").select("id").eq("status", "failed").gte("created_at", since24h)), q<any>(db.from("sweep_log").select("id").neq("status", "swept").eq("dry_run", false).gte("created_at", since7d)), q<any>(db.from("transactions").select("id, user_id, type, status, asset_symbol, amount, created_at").or(`status.in.(pending,processing,completed,succeeded,success,successful),and(status.eq.failed,created_at.gte.${since7d})`).order("created_at", { ascending: false }).limit(15))
   ]);
-
   const userIds = [...new Set(toCheck.rows.map((t) => t.user_id).filter(Boolean))];
-  const names = userIds.length
-    ? await q<any>(db.from("admin_users_overview").select("id, username").in("id", userIds))
-    : { rows: [] as any[] };
+  const names = userIds.length ? await q<any>(db.from("admin_users_overview").select("id, username").in("id", userIds)) : { rows: [] as any[] };
   const nameOf = new Map((names.rows || []).map((u) => [u.id as string, (u.username as string) || ""]));
-
-  // ── Chiffres clés
-  const totalUsers = users.rows.length;
-  const newUsers = users.rows.filter((u) => u.created_at >= since7d).length;
-  const active = users.rows.filter((u) => u.last_activity_at && u.last_activity_at >= since7d).length;
-
-  // ── Volume par jour (7 derniers jours, UTC)
+  const totalUsers = users.rows.length, newUsers = users.rows.filter((u) => u.created_at >= since7d).length, active = users.rows.filter((u) => u.last_activity_at && u.last_activity_at >= since7d).length;
   const days: { key: string; label: string; usd: number; count: number }[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now - i * DAY);
-    days.push({
-      key: d.toISOString().slice(0, 10),
-      label: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" }).replace(".", ""),
-      usd: 0,
-      count: 0
-    });
-  }
-  for (const t of txs.rows) {
-    const day = days.find((d) => d.key === String(t.day).slice(0, 10));
-    if (day) {
-      day.usd += Number(t.total_amount_usd || 0);
-      day.count += Number(t.transaction_count || 0);
-    }
-  }
-  const volume7d = days.reduce((n, d) => n + d.usd, 0);
-  const count7d = days.reduce((n, d) => n + d.count, 0);
-
-  // ── Frais
-  const feeRows = (((fees.data as any[]) || []) as any[])
-    .map((f) => ({ asset: f.asset_symbol as string, total: Number(f.total_fees || 0), usd: Number(f.total_fees || 0) * (prices.get(f.asset_symbol) ?? 0), priced: prices.has(f.asset_symbol) }))
-    .sort((a, b) => b.usd - a.usd);
+  for (let i = 6; i >= 0; i--) { const d = new Date(now - i * DAY); days.push({ key: d.toISOString().slice(0, 10), label: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" }).replace(".", ""), usd: 0, count: 0 }); }
+  for (const t of txs.rows) { const day = days.find((d) => d.key === String(t.day).slice(0, 10)); if (day) { day.usd += Number(t.total_amount_usd || 0); day.count += Number(t.transaction_count || 0); } }
+  const volume7d = days.reduce((n, d) => n + d.usd, 0), count7d = days.reduce((n, d) => n + d.count, 0);
+  const feeRows = (((fees.data as any[]) || []) as any[]).map((f) => ({ asset: f.asset_symbol as string, total: Number(f.total_fees || 0), usd: Number(f.total_fees || 0) * (prices.get(f.asset_symbol) ?? 0), priced: prices.has(f.asset_symbol) })).sort((a, b) => b.usd - a.usd);
   const feesUsd = feeRows.reduce((n, f) => n + f.usd, 0);
-
-  // ── À surveiller (uniquement ce qui demande de l'attention)
   const watch: { tone: "bad" | "warn" | "info"; text: string }[] = [];
-  for (const r of ((recon.data as any[]) || []) as any[]) {
-    if (Math.abs(Number(r.liability_diff)) > 0.00000001) watch.push({ tone: "bad", text: `${r.asset_symbol} : les soldes des utilisateurs ne correspondent pas au total dû (écart de ${formatNumber(Number(r.liability_diff))}).` });
-    if (Number(r.negative_rows) > 0) watch.push({ tone: "bad", text: `${r.asset_symbol} : ${r.negative_rows} solde(s) négatif(s).` });
-    if (Math.abs(Number(r.staking_orphan)) > 0.00000001) watch.push({ tone: "warn", text: `${r.asset_symbol} : ${formatNumber(Number(r.staking_orphan))} en staking sans stake correspondant.` });
-  }
+  for (const r of ((recon.data as any[]) || []) as any[]) { if (Math.abs(Number(r.liability_diff)) > 0.00000001) watch.push({ tone: "bad", text: `${r.asset_symbol} : les soldes des utilisateurs ne correspondent pas au total dû (écart de ${formatNumber(Number(r.liability_diff))}).` }); if (Number(r.negative_rows) > 0) watch.push({ tone: "bad", text: `${r.asset_symbol} : ${r.negative_rows} solde(s) négatif(s).` }); if (Math.abs(Number(r.staking_orphan)) > 0.00000001) watch.push({ tone: "warn", text: `${r.asset_symbol} : ${formatNumber(Number(r.staking_orphan))} en staking sans stake correspondant.` }); }
   const atRisk = loans.rows.reduce((n, l) => n + Number(l.prets_a_risque || 0), 0);
-  if (atRisk > 0) watch.push({ tone: "bad", text: `${atRisk} prêt(s) proche(s) de la liquidation.` });
-  if (stuck.rows.length) watch.push({ tone: "warn", text: `${stuck.rows.length} transaction(s) en attente depuis plus d'une heure.` });
-  if (failed24h.rows.length) watch.push({ tone: "warn", text: `${failed24h.rows.length} transaction(s) en échec ces dernières 24 heures.` });
-  if (sweepFails.rows.length) watch.push({ tone: "warn", text: `${sweepFails.rows.length} balayage(s) en échec cette semaine.` });
-  if (paused.rows.length) watch.push({ tone: "info", text: `Dépôts suspendus : ${paused.rows.map((p) => p.symbol).join(", ")}.` });
-
+  if (atRisk > 0) watch.push({ tone: "bad", text: `${atRisk} prêt(s) proche(s) de la liquidation.` }); if (stuck.rows.length) watch.push({ tone: "warn", text: `${stuck.rows.length} transaction(s) en attente depuis plus d'une heure.` }); if (failed24h.rows.length) watch.push({ tone: "warn", text: `${failed24h.rows.length} transaction(s) en échec ces dernières 24 heures.` }); if (sweepFails.rows.length) watch.push({ tone: "warn", text: `${sweepFails.rows.length} balayage(s) en échec cette semaine.` }); if (paused.rows.length) watch.push({ tone: "info", text: `Dépôts suspendus : ${paused.rows.map((p) => p.symbol).join(", ")}.` });
   const queryErrors = [users.error, txs.error, loans.error, recon.error?.message, fees.error?.message].filter(Boolean).join(" · ");
-
-  return (
-    <div>
-      <PageHeader title="Activité" subtitle="Ce qui se passe sur la plateforme : utilisateurs, volumes, frais et points d'attention." updatedAt={formatDateTime(new Date())} />
-      <ErrorNote text={queryErrors ? `Certaines données n'ont pas pu être lues : ${queryErrors}` : null} />
-
-      <div className="wk-strip">
-        <div className="wk-strip-item">
-          <div className="wk-strip-label">Utilisateurs</div>
-          <div className="wk-strip-value">{totalUsers}</div>
-          <div className="wk-strip-sub">{newUsers} nouveau{newUsers > 1 ? "x" : ""} cette semaine</div>
-        </div>
-        <div className="wk-strip-item">
-          <div className="wk-strip-label">Actifs cette semaine</div>
-          <div className="wk-strip-value">{active}</div>
-          <div className="wk-strip-sub">{totalUsers ? `${Math.round((active / totalUsers) * 100)} % des utilisateurs` : "—"}</div>
-        </div>
-        <div className="wk-strip-item">
-          <div className="wk-strip-label">Volume sur 7 jours</div>
-          <div className="wk-strip-value">{formatCompactUsd(volume7d)}</div>
-          <div className="wk-strip-sub">{count7d} transaction{count7d > 1 ? "s" : ""}</div>
-        </div>
-        <div className="wk-strip-item">
-          <div className="wk-strip-label">Frais gagnés</div>
-          <div className="wk-strip-value">{formatUsd(feesUsd)}</div>
-          <div className="wk-strip-sub">depuis le début</div>
-        </div>
-      </div>
-
-      <div className="wk-section wk-cols">
-        <div className="wk-panel">
-          <h3 className="wk-panel-title">Volume par jour</h3>
-          <p className="wk-panel-hint">Valeur en dollars des transactions, sur les 7 derniers jours.</p>
-          <VolumeChart days={days} />
-        </div>
-        <div className="wk-panel">
-          <h3 className="wk-panel-title">À surveiller</h3>
-          <p className="wk-panel-hint">Ce qui demande de l'attention.</p>
-          {watch.length === 0 ? (
-            <div className="wk-watch-item">
-              <span className="wk-dot wk-dot-ok" />
-              <span>Rien à signaler.</span>
-            </div>
-          ) : (
-            <div className="wk-watch">
-              {watch.map((w, i) => (
-                <div key={i} className="wk-watch-item">
-                  <span className={`wk-dot wk-dot-${w.tone}`} />
-                  <span>{w.text}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="wk-section wk-cols">
-        <div>
-          <div className="wk-section-head">
-            <h2 className="wk-h2">Transactions récentes</h2>
-            <p className="wk-hint">Dépôts réussis, en attente et en échec cette semaine (les 15 plus récentes).</p>
-          </div>
-          {toCheck.rows.length === 0 ? (
-            <Empty text="Aucune transaction récente." />
-          ) : (
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Date</Th>
-                  <Th>Utilisateur</Th>
-                  <Th>Type</Th>
-                  <Th right>Montant</Th>
-                  <Th>Statut</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {toCheck.rows.map((t) => (
-                  <tr key={t.id}>
-                    <Td label="Date">{formatDate(t.created_at)}</Td>
-                    <Td label="Utilisateur">
-                      <div className="wk-asset">{nameOf.get(t.user_id) || "Sans pseudo"}</div>
-                      <div className="wk-asset-sub">{shortId(t.user_id)}</div>
-                    </Td>
-                    <Td label="Type">{TYPE_LABELS[t.type] || t.type}</Td>
-                    <Td right label="Montant">
-                      {formatNumber(Number(t.amount))} <span className="wk-asset-sub">{t.asset_symbol}</span>
-                    </Td>
-                    <Td label="Statut">
-                      {t.status === "failed" ? <Pill tone="bad">Échec</Pill> : ["completed", "succeeded", "success", "successful"].includes(t.status) ? <Pill tone="ok">Réussi</Pill> : <Pill tone="warn">En attente</Pill>}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-          )}
-        </div>
-
-        <div>
-          <div className="wk-section-head">
-            <h2 className="wk-h2">Frais par actif</h2>
-            <p className="wk-hint">Part de chaque actif dans les frais gagnés.</p>
-          </div>
-          {feeRows.length === 0 ? (
-            <Empty text="Aucun frais collecté." />
-          ) : (
-            <div className="wk-panel">
-              <div className="wk-share">
-                {feeRows.map((f) => (
-                  <div key={f.asset} className="wk-share-row">
-                    <div className="wk-share-top">
-                      <span className="wk-asset">{f.asset}</span>
-                      <span>{f.priced ? formatUsd(f.usd) : formatNumber(f.total)}</span>
-                    </div>
-                    <div className="wk-share-track">
-                      <div className="wk-share-fill" style={{ width: `${feesUsd > 0 ? (f.usd / feesUsd) * 100 : 0}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  const transactionRows = (rows: any[]) => <TableWrap><thead><tr><Th>Date</Th><Th>Utilisateur</Th><Th>Type</Th><Th right>Montant</Th><Th>Statut</Th></tr></thead><tbody>{rows.map((t) => <tr key={t.id}><Td label="Date">{formatDate(t.created_at)}</Td><Td label="Utilisateur"><div className="wk-asset">{nameOf.get(t.user_id) || "Sans pseudo"}</div><div className="wk-asset-sub">{shortId(t.user_id)}</div></Td><Td label="Type">{TYPE_LABELS[t.type] || t.type}</Td><Td right label="Montant">{formatNumber(Number(t.amount))} <span className="wk-asset-sub">{t.asset_symbol}</span></Td><Td label="Statut">{t.status === "failed" ? <Pill tone="bad">Échec</Pill> : SUCCESS_STATUSES.includes(t.status) ? <Pill tone="ok">Réussi</Pill> : <Pill tone="warn">En attente</Pill>}</Td></tr>)}</tbody></TableWrap>;
+  return <div><PageHeader title="Activité" subtitle="Ce qui se passe sur la plateforme : utilisateurs, volumes, frais et points d'attention." updatedAt={formatDateTime(new Date())} /><ErrorNote text={queryErrors ? `Certaines données n'ont pas pu être lues : ${queryErrors}` : null} /><div className="wk-strip"><div className="wk-strip-item"><div className="wk-strip-label">Utilisateurs</div><div className="wk-strip-value">{totalUsers}</div><div className="wk-strip-sub">{newUsers} nouveau{newUsers > 1 ? "x" : ""} cette semaine</div></div><div className="wk-strip-item"><div className="wk-strip-label">Actifs cette semaine</div><div className="wk-strip-value">{active}</div><div className="wk-strip-sub">{totalUsers ? `${Math.round((active / totalUsers) * 100)} % des utilisateurs` : "—"}</div></div><div className="wk-strip-item"><div className="wk-strip-label">Volume sur 7 jours</div><div className="wk-strip-value">{formatCompactUsd(volume7d)}</div><div className="wk-strip-sub">{count7d} transaction{count7d > 1 ? "s" : ""}</div></div><div className="wk-strip-item"><div className="wk-strip-label">Frais gagnés</div><div className="wk-strip-value">{formatUsd(feesUsd)}</div><div className="wk-strip-sub">depuis le début</div></div></div><div className="wk-section wk-cols"><div className="wk-panel"><h3 className="wk-panel-title">Volume par jour</h3><p className="wk-panel-hint">Valeur en dollars des transactions, sur les 7 derniers jours.</p><VolumeChart days={days} /></div><div className="wk-panel"><h3 className="wk-panel-title">À surveiller</h3><p className="wk-panel-hint">Ce qui demande de l'attention.</p>{watch.length === 0 ? <div className="wk-watch-item"><span className="wk-dot wk-dot-ok" /><span>Rien à signaler.</span></div> : <div className="wk-watch">{watch.map((w, i) => <div key={i} className="wk-watch-item"><span className={`wk-dot wk-dot-${w.tone}`} /><span>{w.text}</span></div>)}</div>}</div></div><div className="wk-section wk-cols"><div><div className="wk-section-head"><h2 className="wk-h2">Transactions récentes</h2><p className="wk-hint">Dépôts réussis, en attente et en échec cette semaine (les 15 plus récentes).</p></div>{toCheck.rows.length === 0 ? <Empty text="Aucune transaction récente." /> : <>{transactionRows(toCheck.rows.slice(0, 5))}{toCheck.rows.length > 5 && <details style={{ marginTop: 12 }}><summary className="wk-link" style={{ cursor: "pointer" }}>Voir les {toCheck.rows.length - 5} transactions restantes</summary><div style={{ marginTop: 12 }}>{transactionRows(toCheck.rows.slice(5))}</div></details>}</>}</div><div><div className="wk-section-head"><h2 className="wk-h2">Frais par actif</h2><p className="wk-hint">Part de chaque actif dans les frais gagnés.</p></div>{feeRows.length === 0 ? <Empty text="Aucun frais collecté." /> : <div className="wk-panel"><div className="wk-share">{feeRows.map((f) => <div key={f.asset} className="wk-share-row"><div className="wk-share-top"><span className="wk-asset">{f.asset}</span><span>{f.priced ? formatUsd(f.usd) : formatNumber(f.total)}</span></div><div className="wk-share-track"><div className="wk-share-fill" style={{ width: `${feesUsd > 0 ? (f.usd / feesUsd) * 100 : 0}%` }} /></div></div>)}</div></div>}</div></div></div>;
 }
 
-function VolumeChart({ days }: { days: { key: string; label: string; usd: number }[] }) {
-  const W = 640;
-  const H = 230;
-  const top = 26;
-  const bottom = 30;
-  const max = Math.max(...days.map((d) => d.usd), 1);
-  const plotH = H - top - bottom;
-  const slot = W / days.length;
-  const barW = Math.min(46, slot * 0.56);
-
-  return (
-    <svg className="wk-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Volume par jour sur 7 jours">
-      {[0, 0.5, 1].map((f) => {
-        const y = top + plotH * (1 - f);
-        return <line key={f} x1={0} x2={W} y1={y} y2={y} stroke="var(--line)" strokeWidth={1} />;
-      })}
-      {days.map((d, i) => {
-        const h = d.usd > 0 ? Math.max((d.usd / max) * plotH, 2) : 0;
-        const x = i * slot + (slot - barW) / 2;
-        const y = top + plotH - h;
-        const isLast = i === days.length - 1;
-        return (
-          <g key={d.key}>
-            <title>{`${d.label} : ${formatUsd(d.usd)}`}</title>
-            <rect x={x} y={y} width={barW} height={h} rx={4} fill={isLast ? "var(--accent)" : "#8fbcc4"} />
-            <text className="wk-chart-value" x={x + barW / 2} y={Math.max(y - 6, 12)} textAnchor="middle">
-              {d.usd > 0 ? formatCompactUsd(d.usd) : ""}
-            </text>
-            <text className="wk-chart-label" x={x + barW / 2} y={H - 8} textAnchor="middle">
-              {d.label}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
+function VolumeChart({ days }: { days: { key: string; label: string; usd: number }[] }) { const W = 640, H = 230, top = 26, bottom = 30, max = Math.max(...days.map((d) => d.usd), 1), plotH = H - top - bottom, slot = W / days.length, barW = Math.min(46, slot * 0.56); return <svg className="wk-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Volume par jour sur 7 jours">{[0, 0.5, 1].map((f) => <line key={f} x1={0} x2={W} y1={top + plotH * (1 - f)} y2={top + plotH * (1 - f)} stroke="var(--line)" strokeWidth={1} />)}{days.map((d, i) => { const h = d.usd > 0 ? Math.max((d.usd / max) * plotH, 2) : 0, x = i * slot + (slot - barW) / 2, y = top + plotH - h, isLast = i === days.length - 1; return <g key={d.key}><title>{`${d.label} : ${formatUsd(d.usd)}`}</title><rect x={x} y={y} width={barW} height={h} rx={4} fill={isLast ? "var(--accent)" : "#8fbcc4"} /><text className="wk-chart-value" x={x + barW / 2} y={Math.max(y - 6, 12)} textAnchor="middle">{d.usd > 0 ? formatCompactUsd(d.usd) : ""}</text><text className="wk-chart-label" x={x + barW / 2} y={H - 8} textAnchor="middle">{d.label}</text></g>; })}</svg>; }
