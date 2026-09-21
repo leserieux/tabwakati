@@ -44,7 +44,7 @@ Ouvre http://localhost:3000 — tu seras redirigé vers `/login`.
 |---|---|
 | `ADMIN_PASSWORD` | Choisis un mot de passe fort, à toi de le définir |
 | `SESSION_SECRET` | Une longue chaîne aléatoire (ex: génère-la avec `openssl rand -hex 32`) |
-| `SUPABASE_URL` | `https://jbzbwyuawejdhhutkmkk.supabase.co` |
+| `SUPABASE_URL` | `lien du projet` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Dashboard Supabase → Project Settings → API → `service_role` (secret, ne jamais exposer côté client) |
 | `TREASURY_EVM_ADDRESS` | `0x9189e4e751D1B0BB2967E6B129391e4baE8fc38C` (déjà dans `.env.example`) |
 | `TREASURY_BTC_ADDRESS` | `1KwmTSXyopi4fiBJesatZkQmNQzb7NHikV` (déjà dans `.env.example`) |
