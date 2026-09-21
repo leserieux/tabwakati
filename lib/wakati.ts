@@ -135,3 +135,47 @@ export const loadWakati = cache(async (): Promise<WakatiData> => {
 
   return { asset, price, change24h, state, history, wallet, holders, inApp, pool, flows, chain, external, freeReserve, underCovered, circulating, marketCap, fdv, errors };
 });
+
+/** WAKATI côté plateforme uniquement (soldes des utilisateurs dans l'appli). Aucune lecture blockchain. */
+export interface WakatiInApp {
+  total: number;
+  available: number;
+  staking: number;
+  pending: number;
+  holders: number;
+  stock: number | null; // liquidité interne de la plateforme (treasury_wallets)
+  price: number;
+  error?: string;
+}
+
+export const loadWakatiInApp = cache(async (): Promise<WakatiInApp> => {
+  const db = getSupabaseAdmin();
+  const [bal, wal, price] = await Promise.all([
+    q<any>(db.from("user_balances").select("available_balance, staking_balance, pending_balance").eq("asset_symbol", "WAKATI")),
+    q<any>(db.from("treasury_wallets").select("balance").eq("asset_symbol", "WAKATI").limit(1)),
+    q<any>(db.from("asset_prices").select("price_usd").eq("asset_symbol", "WAKATI").limit(1))
+  ]);
+  let available = 0;
+  let staking = 0;
+  let pending = 0;
+  let holders = 0;
+  for (const b of bal.rows) {
+    const a = Number(b.available_balance || 0);
+    const s = Number(b.staking_balance || 0);
+    const p = Number(b.pending_balance || 0);
+    available += a;
+    staking += s;
+    pending += p;
+    if (a + s + p > 0) holders++;
+  }
+  return {
+    total: available + staking + pending,
+    available,
+    staking,
+    pending,
+    holders,
+    stock: wal.rows[0] ? Number(wal.rows[0].balance) : null,
+    price: price.rows[0] ? Number(price.rows[0].price_usd) : 0,
+    error: bal.error || wal.error || price.error
+  };
+});

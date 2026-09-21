@@ -8,8 +8,9 @@ import {
   getBtcBalances
 } from "@/lib/chain";
 import { toAlpha2 } from "@/lib/countries";
+import { loadWakatiInApp } from "@/lib/wakati";
 import { formatNumber, formatToken, formatUsd, formatPct, formatDateTime } from "@/lib/format";
-import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, Icon } from "@/components/ui";
+import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, Icon, SegmentBar, Swatch, SEG } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +57,7 @@ function computeStatus(have: number | null, owe: number, treasuryOnly: number | 
   return "covered";
 }
 
-async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; internal: Line | null }> {
+async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[] }> {
   const db = getSupabaseAdmin();
   const [{ data: assets, error: assetsError }, { data: userAddrs }] = await Promise.all([
     db.from("supported_assets").select("symbol, network, contract_address, decimals").neq("network", "Fiat").eq("is_active", true),
@@ -73,15 +74,9 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
     addrMap.set(a.asset_symbol, list);
   }
 
-  let internalAsset: any = null;
-  let internalLiab: Liab = { total: 0, count: 0 };
   const toRead = (assets || []).filter((a) => {
     const l = liab.get(a.symbol) || { total: 0, count: 0 };
-    if (INTERNAL_ONLY_ASSETS.has(a.symbol)) {
-      internalAsset = a;
-      internalLiab = l;
-      return false;
-    }
+    if (INTERNAL_ONLY_ASSETS.has(a.symbol)) return false; // WAKATI : section dédiée plus bas
     return !(l.total === 0 && l.count === 0);
   });
 
@@ -150,30 +145,7 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
 
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
 
-  // WAKATI : token interne. Pas de prix de marché, mais la trésorerie doit détenir assez de tokens sur la blockchain.
-  let internal: Line | null = null;
-  if (internalAsset) {
-    let onChain: number | null = null;
-    let err: string | undefined;
-    try {
-      if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-      if (!internalAsset.contract_address) throw new Error("adresse du contrat introuvable");
-      onChain = await getTokenBalance(internalAsset.network.toLowerCase(), internalAsset.contract_address, TREASURY_EVM_ADDRESS, internalAsset.decimals || 18);
-    } catch (e: any) {
-      err = e?.message || "Erreur inconnue";
-    }
-    internal = {
-      asset: "WAKATI",
-      label: `WAKATI (${internalAsset.network})`,
-      have: onChain,
-      owe: internalLiab.total,
-      note: `dû à ${internalLiab.count} utilisateur${internalLiab.count > 1 ? "s" : ""}`,
-      status: computeStatus(onChain, internalLiab.total, onChain),
-      priceUsd: null,
-      error: err
-    };
-  }
-  return { lines, internal };
+  return { lines };
 }
 
 interface Wallet {
@@ -274,15 +246,14 @@ function usd(l: Line, amount: number): string {
 export default async function SolvencyPage() {
   let crypto: Line[] = [];
   let mobile: Line[] = [];
-  let internal: Line | null = null;
   let loadError: string | null = null;
 
   const prices = await loadPrices();
+  const wk = await loadWakatiInApp();
   try {
     const liab = await loadLiabilities();
     const [c, m] = await Promise.all([loadCrypto(liab, prices), loadMobileMoney(liab, prices)]);
     crypto = c.lines;
-    internal = c.internal;
     mobile = m.lines;
   } catch (e: any) {
     loadError = e?.message || "Erreur de chargement";
@@ -407,8 +378,6 @@ export default async function SolvencyPage() {
         </div>
       )}
 
-      <ErrorNote text={loadError} />
-
       <Section title="Crypto" hint="J'ai = treasury + fonds encore sur les adresses des utilisateurs.">
         <LinesTable lines={crypto} empty="Aucune crypto n'est due aux utilisateurs." />
       </Section>
@@ -417,14 +386,9 @@ export default async function SolvencyPage() {
         <LinesTable lines={mobile} empty="Aucun pays actif." />
       </Section>
 
-      {internal && (
-        <Section title="WAKATI" hint="Token interne : son prix est fixé par ta réserve, donc il n'entre pas dans les totaux en dollars. Ce qui compte : la trésorerie doit détenir sur la blockchain au moins autant de tokens que ce qui est dû aux utilisateurs.">
-          <LinesTable lines={[internal]} empty="" />
-          <p style={{ margin: "12px 0 0", fontSize: 14 }}>
-            <a className="wk-link" href="/dashboard/wakati">Voir la tokenomics complète de WAKATI</a>
-          </p>
-        </Section>
-      )}
+      <Section title="WAKATI dans l'application" hint="Uniquement ce que ta plateforme suit : les soldes de tes utilisateurs. Les WAKATI sur la blockchain se voient dans le menu WAKATI.">
+        <WakatiInAppBlock wk={wk} />
+      </Section>
     </div>
   );
 }
@@ -509,5 +473,64 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
         })}
       </tbody>
     </TableWrap>
+  );
+}
+
+function WakatiInAppBlock({ wk }: { wk: Awaited<ReturnType<typeof loadWakatiInApp>> }) {
+  if (wk.error) return <div className="wk-alert-bad">Lecture impossible : {wk.error}</div>;
+  if (wk.total === 0 && wk.holders === 0) return <Empty text="Aucun WAKATI détenu dans l'application." />;
+  const rate = wk.total > 0 ? wk.staking / wk.total : 0;
+  const rows = [
+    { key: "available", label: "Disponible", value: wk.available, color: SEG.available, note: "utilisable ou retirable par les utilisateurs" },
+    { key: "staking", label: "En staking", value: wk.staking, color: SEG.staking, note: `${formatPct(rate * 100)} du total en app` },
+    { key: "pending", label: "En attente", value: wk.pending, color: SEG.pending, note: "en cours de traitement" }
+  ];
+  return (
+    <>
+      <div className="wk-strip">
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Total dans l'appli</div>
+          <div className="wk-strip-value">{formatToken(wk.total)}</div>
+          <div className="wk-strip-sub">{wk.price > 0 ? `soit environ ${formatUsd(wk.total * wk.price)}` : "WAKATI"}</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">En circulation</div>
+          <div className="wk-strip-value">{formatToken(wk.available)}</div>
+          <div className="wk-strip-sub">disponible, hors staking</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">En staking</div>
+          <div className="wk-strip-value">{formatToken(wk.staking)}</div>
+          <div className="wk-strip-sub">{formatPct(rate * 100)} du total</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Détenteurs</div>
+          <div className="wk-strip-value">{wk.holders}</div>
+          <div className="wk-strip-sub">utilisateurs avec des WAKATI</div>
+        </div>
+      </div>
+
+      <div className="wk-panel" style={{ marginTop: 12 }}>
+        <SegmentBar segments={rows.map((r) => ({ key: r.key, label: r.label, value: r.value, color: r.color }))} label="Répartition des WAKATI dans l'application" />
+        <div className="wk-kv" style={{ marginTop: 16 }}>
+          {rows.map((r) => (
+            <div key={r.key} className="wk-kv-row">
+              <span><Swatch color={r.color} />{r.label} <span className="wk-usd">{r.note}</span></span>
+              <span>{formatToken(r.value)}</span>
+            </div>
+          ))}
+          {wk.stock !== null && (
+            <div className="wk-kv-row">
+              <span>Stock de la plateforme <span className="wk-usd">liquidité interne pour les achats, échanges et prêts</span></span>
+              <span>{formatToken(wk.stock)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <p style={{ margin: "12px 0 0", fontSize: 14 }}>
+        <a className="wk-link" href="/dashboard/wakati">Voir la tokenomics complète (blockchain, prix, staking, détenteurs)</a>
+      </p>
+    </>
   );
 }

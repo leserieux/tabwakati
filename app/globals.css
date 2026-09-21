@@ -262,8 +262,8 @@ a { color: inherit; }
 .wk-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 .wk-kv { display: grid; gap: 10px; }
 .wk-kv-row { display: flex; justify-content: space-between; gap: 16px; font-size: 14.5px; }
-.wk-kv-row span:first-child { color: var(--muted); }
-.wk-kv-row span:last-child { color: var(--ink); font-weight: 500; text-align: right; }
+.wk-kv-row > span:first-child { color: var(--muted); }
+.wk-kv-row > span:last-child { color: var(--ink); font-weight: 500; text-align: right; }
 
 .wk-formula { font-size: 15px; line-height: 1.7; }
 .wk-formula code { background: var(--info-bg); padding: 2px 8px; border-radius: 6px; font-family: inherit; font-weight: 500; color: var(--ink); }
