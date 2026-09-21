@@ -1,5 +1,5 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
-import { formatNumber, formatUsd, formatCompactUsd, formatDate, formatDateTime } from "@/lib/format";
+import { formatNumber, formatUsd, formatCompactUsd, formatDate, formatDateTime, shortId } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote } from "@/components/ui";
 
 export const runtime = "nodejs";
@@ -42,12 +42,18 @@ export default async function ActivityPage() {
     q<any>(
       db
         .from("transactions")
-        .select("id, type, status, asset_symbol, amount, created_at")
+        .select("id, user_id, type, status, asset_symbol, amount, created_at")
         .or(`status.in.(pending,processing,completed,succeeded,success,successful),and(status.eq.failed,created_at.gte.${since7d})`)
         .order("created_at", { ascending: false })
         .limit(15)
     )
   ]);
+
+  const userIds = [...new Set(toCheck.rows.map((t) => t.user_id).filter(Boolean))];
+  const names = userIds.length
+    ? await q<any>(db.from("admin_users_overview").select("id, username").in("id", userIds))
+    : { rows: [] as any[] };
+  const nameOf = new Map((names.rows || []).map((u) => [u.id as string, (u.username as string) || ""]));
 
   // ── Chiffres clés
   const totalUsers = users.rows.length;
@@ -155,16 +161,17 @@ export default async function ActivityPage() {
       <div className="wk-section wk-cols">
         <div>
           <div className="wk-section-head">
-            <h2 className="wk-h2">Transactions réussies</h2>
+            <h2 className="wk-h2">Transactions récentes</h2>
             <p className="wk-hint">Dépôts réussis, en attente et en échec cette semaine (les 15 plus récentes).</p>
           </div>
           {toCheck.rows.length === 0 ? (
-            <Empty text="Aucune transaction réussie ou à vérifier." />
+            <Empty text="Aucune transaction récente." />
           ) : (
             <TableWrap>
               <thead>
                 <tr>
                   <Th>Date</Th>
+                  <Th>Utilisateur</Th>
                   <Th>Type</Th>
                   <Th right>Montant</Th>
                   <Th>Statut</Th>
@@ -174,6 +181,10 @@ export default async function ActivityPage() {
                 {toCheck.rows.map((t) => (
                   <tr key={t.id}>
                     <Td label="Date">{formatDate(t.created_at)}</Td>
+                    <Td label="Utilisateur">
+                      <div className="wk-asset">{nameOf.get(t.user_id) || "Sans pseudo"}</div>
+                      <div className="wk-asset-sub">{shortId(t.user_id)}</div>
+                    </Td>
                     <Td label="Type">{TYPE_LABELS[t.type] || t.type}</Td>
                     <Td right label="Montant">
                       {formatNumber(Number(t.amount))} <span className="wk-asset-sub">{t.asset_symbol}</span>
