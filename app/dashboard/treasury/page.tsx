@@ -9,7 +9,7 @@ import {
 } from "@/lib/chain";
 import { toAlpha2 } from "@/lib/countries";
 import { loadWakatiInApp } from "@/lib/wakati";
-import { formatNumber, formatToken, formatUsd, formatPct, formatDateTime } from "@/lib/format";
+import { formatNumber, formatToken, formatCompactNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, Icon, SegmentBar, Swatch, SEG } from "@/components/ui";
 
 export const runtime = "nodejs";
@@ -386,7 +386,7 @@ export default async function SolvencyPage() {
         <LinesTable lines={mobile} empty="Aucun pays actif." />
       </Section>
 
-      <Section title="WAKATI dans l'application" hint="Uniquement ce que ta plateforme suit : les soldes de tes utilisateurs. Les WAKATI sur la blockchain se voient dans le menu WAKATI.">
+      <Section title="WAKATI dans l'application" hint="Tout ce que ta plateforme suit en interne : le stock qu'elle garde et les soldes de tes utilisateurs. Les WAKATI sur la blockchain se voient dans le menu WAKATI.">
         <WakatiInAppBlock wk={wk} />
       </Section>
     </div>
@@ -478,54 +478,101 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
 
 function WakatiInAppBlock({ wk }: { wk: Awaited<ReturnType<typeof loadWakatiInApp>> }) {
   if (wk.error) return <div className="wk-alert-bad">Lecture impossible : {wk.error}</div>;
-  if (wk.total === 0 && wk.holders === 0) return <Empty text="Aucun WAKATI détenu dans l'application." />;
-  const rate = wk.total > 0 ? wk.staking / wk.total : 0;
-  const rows = [
-    { key: "available", label: "Disponible", value: wk.available, color: SEG.available, note: "utilisable ou retirable par les utilisateurs" },
-    { key: "staking", label: "En staking", value: wk.staking, color: SEG.staking, note: `${formatPct(rate * 100)} du total en app` },
-    { key: "pending", label: "En attente", value: wk.pending, color: SEG.pending, note: "en cours de traitement" }
+
+  const platform = wk.stock ?? 0; // WAKATI gardés par la plateforme
+  const users = wk.total; // WAKATI détenus par les utilisateurs = en circulation
+  const grand = platform + users; // total dans l'appli
+  if (grand === 0) return <Empty text="Aucun WAKATI dans l'application." />;
+
+  const pctTotal = (n: number) => formatPct((n / grand) * 100, n > 0 && n / grand < 0.001 ? 3 : 1);
+  const pctCirc = (n: number) => (users > 0 ? formatPct((n / users) * 100, 1) : "—");
+  const val = (n: number) => (wk.price > 0 ? formatUsd(n * wk.price) : "—");
+
+  const rows: { key: string; label: string; desc: string; value: number; color: string; sub?: boolean; strong?: boolean; inCirc?: boolean }[] = [
+    { key: "stock", label: "Stock de la plateforme", desc: "WAKATI que la plateforme garde pour vendre, échanger et prêter. Ils ne sont pas encore chez les utilisateurs.", value: platform, color: SEG.reserve },
+    { key: "users", label: "Détenus par les utilisateurs", desc: `Total des soldes de ${wk.holders} utilisateurs. C'est ce qui est en circulation.`, value: users, color: "transparent", strong: true, inCirc: true },
+    { key: "available", label: "dont disponible", desc: "Libre : utilisable, échangeable ou retirable.", value: wk.available, color: SEG.available, sub: true, inCirc: true },
+    { key: "staking", label: "dont en staking", desc: "Verrouillé dans le pool de staking.", value: wk.staking, color: SEG.staking, sub: true, inCirc: true },
+    { key: "pending", label: "dont en attente", desc: "En cours de traitement.", value: wk.pending, color: SEG.pending, sub: true, inCirc: true }
   ];
+
   return (
     <>
       <div className="wk-strip">
         <div className="wk-strip-item">
           <div className="wk-strip-label">Total dans l'appli</div>
-          <div className="wk-strip-value">{formatToken(wk.total)}</div>
-          <div className="wk-strip-sub">{wk.price > 0 ? `soit environ ${formatUsd(wk.total * wk.price)}` : "WAKATI"}</div>
+          <div className="wk-strip-value">{formatCompactNumber(grand)}</div>
+          <div className="wk-strip-sub">{wk.price > 0 ? `environ ${formatUsd(grand * wk.price)}` : "WAKATI"}</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Stock de la plateforme</div>
+          <div className="wk-strip-value">{formatCompactNumber(platform)}</div>
+          <div className="wk-strip-sub">{pctTotal(platform)} du total</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">En circulation</div>
-          <div className="wk-strip-value">{formatToken(wk.available)}</div>
-          <div className="wk-strip-sub">disponible, hors staking</div>
+          <div className="wk-strip-value">{formatToken(users)}</div>
+          <div className="wk-strip-sub">chez {wk.holders} utilisateurs</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">En staking</div>
           <div className="wk-strip-value">{formatToken(wk.staking)}</div>
-          <div className="wk-strip-sub">{formatPct(rate * 100)} du total</div>
-        </div>
-        <div className="wk-strip-item">
-          <div className="wk-strip-label">Détenteurs</div>
-          <div className="wk-strip-value">{wk.holders}</div>
-          <div className="wk-strip-sub">utilisateurs avec des WAKATI</div>
+          <div className="wk-strip-sub">{pctCirc(wk.staking)} de la circulation</div>
         </div>
       </div>
 
       <div className="wk-panel" style={{ marginTop: 12 }}>
-        <SegmentBar segments={rows.map((r) => ({ key: r.key, label: r.label, value: r.value, color: r.color }))} label="Répartition des WAKATI dans l'application" />
-        <div className="wk-kv" style={{ marginTop: 16 }}>
-          {rows.map((r) => (
-            <div key={r.key} className="wk-kv-row">
-              <span><Swatch color={r.color} />{r.label} <span className="wk-usd">{r.note}</span></span>
-              <span>{formatToken(r.value)}</span>
-            </div>
-          ))}
-          {wk.stock !== null && (
-            <div className="wk-kv-row">
-              <span>Stock de la plateforme <span className="wk-usd">liquidité interne pour les achats, échanges et prêts</span></span>
-              <span>{formatToken(wk.stock)}</span>
-            </div>
-          )}
-        </div>
+        <SegmentBar
+          label="Répartition des WAKATI dans l'application"
+          segments={[
+            { key: "stock", label: "Stock de la plateforme", value: platform, color: SEG.reserve },
+            { key: "available", label: "Disponible", value: wk.available, color: SEG.available },
+            { key: "staking", label: "En staking", value: wk.staking, color: SEG.staking },
+            { key: "pending", label: "En attente", value: wk.pending, color: SEG.pending }
+          ]}
+        />
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <TableWrap>
+          <thead>
+            <tr>
+              <Th>Catégorie</Th>
+              <Th right>Quantité</Th>
+              <Th right>Part du total</Th>
+              <Th right>Part de la circulation</Th>
+              <Th right>Valeur</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key}>
+                <Td>
+                  <div className="wk-legend-name" style={r.sub ? { paddingLeft: 20 } : r.strong ? { fontWeight: 600 } : undefined}>
+                    {r.color !== "transparent" ? <Swatch color={r.color} /> : <span className="wk-swatch" style={{ background: "transparent" }} />}
+                    {r.label}
+                  </div>
+                  <div className="wk-legend-desc" style={r.sub ? { marginLeft: 40 } : undefined}>{r.desc}</div>
+                </Td>
+                <Td right label="Quantité"><span style={r.strong ? { fontWeight: 600 } : undefined}>{formatToken(r.value)}</span></Td>
+                <Td right label="Part du total">{pctTotal(r.value)}</Td>
+                <Td right label="Part de la circulation">{r.inCirc ? pctCirc(r.value) : "—"}</Td>
+                <Td right label="Valeur">{val(r.value)}</Td>
+              </tr>
+            ))}
+            <tr style={{ background: "#fafbfc" }}>
+              <Td><span className="wk-asset">Total dans l'appli</span></Td>
+              <Td right label="Quantité"><strong style={{ color: "var(--ink)" }}>{formatToken(grand)}</strong></Td>
+              <Td right label="Part du total">100 %</Td>
+              <Td right label="Part de la circulation">—</Td>
+              <Td right label="Valeur"><strong style={{ color: "var(--ink)" }}>{val(grand)}</strong></Td>
+            </tr>
+          </tbody>
+        </TableWrap>
+      </div>
+
+      <div className="wk-callout" style={{ marginTop: 12 }}>
+        <strong>À retenir.</strong> Sur {formatCompactNumber(grand)} WAKATI dans l'appli, {formatToken(users)} ({pctTotal(users)}) sont chez les utilisateurs. Seulement {formatToken(wk.available)} sont vraiment libres : le reste est verrouillé en staking. Valeurs calculées au prix interne.
       </div>
 
       <p style={{ margin: "12px 0 0", fontSize: 14 }}>
