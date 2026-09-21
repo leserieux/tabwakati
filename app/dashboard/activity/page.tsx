@@ -1,11 +1,25 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
-import { formatNumber, formatUsd, formatDate } from "@/lib/format";
-import { Kpi, KpiGrid, TableShell, Th, Td, Badge, EmptyState } from "@/components/ui";
+import { formatNumber, formatUsd, formatCompactUsd, formatDate, formatDateTime } from "@/lib/format";
+import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DAY = 24 * 3600 * 1000;
+
+const TYPE_LABELS: Record<string, string> = {
+  deposit: "Dépôt",
+  withdrawal: "Retrait",
+  swap_debit: "Échange (débit)",
+  swap_credit: "Échange (crédit)",
+  staking_lock: "Verrouillage staking",
+  unstake: "Déblocage staking",
+  unstake_request: "Demande de déblocage",
+  staking_reward: "Récompense staking",
+  game_win: "Gain au jeu",
+  loan_disbursement: "Prêt versé",
+  loan_repayment: "Remboursement de prêt"
+};
 
 export default async function ActivityPage() {
   const db = getSupabaseAdmin();
@@ -17,7 +31,7 @@ export default async function ActivityPage() {
   const [prices, users, txs, loans, recon, fees, paused, stuck, failed24h, sweepFails, toCheck] = await Promise.all([
     loadPrices(),
     q<any>(db.from("admin_users_overview").select("last_activity_at, created_at")),
-    q<any>(db.from("admin_transactions_overview").select("transaction_count, total_amount_usd").gte("day", since7d.slice(0, 10))),
+    q<any>(db.from("admin_transactions_overview").select("day, transaction_count, total_amount_usd").gte("day", new Date(now - 6 * DAY).toISOString().slice(0, 10))),
     q<any>(db.from("admin_loans_dashboard").select("prets_a_risque")),
     db.rpc("get_admin_reconciliation"),
     db.rpc("get_platform_fees_totals"),
@@ -35,114 +49,207 @@ export default async function ActivityPage() {
     )
   ]);
 
+  // ── Chiffres clés
   const totalUsers = users.rows.length;
   const newUsers = users.rows.filter((u) => u.created_at >= since7d).length;
   const active = users.rows.filter((u) => u.last_activity_at && u.last_activity_at >= since7d).length;
-  const txCount = txs.rows.reduce((n, t) => n + Number(t.transaction_count || 0), 0);
-  const volume = txs.rows.reduce((n, t) => n + Number(t.total_amount_usd || 0), 0);
 
-  const feeRows: any[] = ((fees.data as any[]) || []).map((f) => ({ ...f, usd: Number(f.total_fees || 0) * (prices.get(f.asset_symbol) ?? 0) }));
-  feeRows.sort((a, b) => b.usd - a.usd);
+  // ── Volume par jour (7 derniers jours, UTC)
+  const days: { key: string; label: string; usd: number; count: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now - i * DAY);
+    days.push({
+      key: d.toISOString().slice(0, 10),
+      label: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" }).replace(".", ""),
+      usd: 0,
+      count: 0
+    });
+  }
+  for (const t of txs.rows) {
+    const day = days.find((d) => d.key === String(t.day).slice(0, 10));
+    if (day) {
+      day.usd += Number(t.total_amount_usd || 0);
+      day.count += Number(t.transaction_count || 0);
+    }
+  }
+  const volume7d = days.reduce((n, d) => n + d.usd, 0);
+  const count7d = days.reduce((n, d) => n + d.count, 0);
+
+  // ── Frais
+  const feeRows = (((fees.data as any[]) || []) as any[])
+    .map((f) => ({ asset: f.asset_symbol as string, total: Number(f.total_fees || 0), usd: Number(f.total_fees || 0) * (prices.get(f.asset_symbol) ?? 0), priced: prices.has(f.asset_symbol) }))
+    .sort((a, b) => b.usd - a.usd);
   const feesUsd = feeRows.reduce((n, f) => n + f.usd, 0);
 
-  // À surveiller : uniquement ce qui demande de l'attention
-  const watch: { bad: boolean; text: string }[] = [];
-  const reconRows: any[] = (recon.data as any[]) || [];
-  for (const r of reconRows) {
-    if (Math.abs(Number(r.liability_diff)) > 0.00000001) watch.push({ bad: true, text: `${r.asset_symbol} : les soldes des utilisateurs ne correspondent pas au total dû (écart ${formatNumber(Number(r.liability_diff))}).` });
-    if (Number(r.negative_rows) > 0) watch.push({ bad: true, text: `${r.asset_symbol} : ${r.negative_rows} solde(s) négatif(s).` });
-    if (Math.abs(Number(r.staking_orphan)) > 0.00000001) watch.push({ bad: false, text: `${r.asset_symbol} : ${formatNumber(Number(r.staking_orphan))} en staking sans stake correspondant.` });
+  // ── À surveiller (uniquement ce qui demande de l'attention)
+  const watch: { tone: "bad" | "warn" | "info"; text: string }[] = [];
+  for (const r of ((recon.data as any[]) || []) as any[]) {
+    if (Math.abs(Number(r.liability_diff)) > 0.00000001) watch.push({ tone: "bad", text: `${r.asset_symbol} : les soldes des utilisateurs ne correspondent pas au total dû (écart de ${formatNumber(Number(r.liability_diff))}).` });
+    if (Number(r.negative_rows) > 0) watch.push({ tone: "bad", text: `${r.asset_symbol} : ${r.negative_rows} solde(s) négatif(s).` });
+    if (Math.abs(Number(r.staking_orphan)) > 0.00000001) watch.push({ tone: "warn", text: `${r.asset_symbol} : ${formatNumber(Number(r.staking_orphan))} en staking sans stake correspondant.` });
   }
   const atRisk = loans.rows.reduce((n, l) => n + Number(l.prets_a_risque || 0), 0);
-  if (atRisk > 0) watch.push({ bad: true, text: `${atRisk} prêt(s) proche(s) de la liquidation.` });
-  if (stuck.rows.length) watch.push({ bad: false, text: `${stuck.rows.length} transaction(s) en attente depuis plus d'1 heure.` });
-  if (failed24h.rows.length) watch.push({ bad: false, text: `${failed24h.rows.length} transaction(s) en échec ces dernières 24 h.` });
-  if (sweepFails.rows.length) watch.push({ bad: false, text: `${sweepFails.rows.length} balayage(s) en échec cette semaine.` });
-  if (paused.rows.length) watch.push({ bad: false, text: `Dépôts suspendus : ${paused.rows.map((p) => p.symbol).join(", ")}.` });
+  if (atRisk > 0) watch.push({ tone: "bad", text: `${atRisk} prêt(s) proche(s) de la liquidation.` });
+  if (stuck.rows.length) watch.push({ tone: "warn", text: `${stuck.rows.length} transaction(s) en attente depuis plus d'une heure.` });
+  if (failed24h.rows.length) watch.push({ tone: "warn", text: `${failed24h.rows.length} transaction(s) en échec ces dernières 24 heures.` });
+  if (sweepFails.rows.length) watch.push({ tone: "warn", text: `${sweepFails.rows.length} balayage(s) en échec cette semaine.` });
+  if (paused.rows.length) watch.push({ tone: "info", text: `Dépôts suspendus : ${paused.rows.map((p) => p.symbol).join(", ")}.` });
 
-  const queryErrors = [users.error, txs.error, loans.error, recon.error?.message, fees.error?.message].filter(Boolean);
+  const queryErrors = [users.error, txs.error, loans.error, recon.error?.message, fees.error?.message].filter(Boolean).join(" · ");
 
   return (
     <div>
-      <h1 style={{ color: "#f8fafc", marginBottom: "0.25rem" }}>Activité</h1>
-      <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1.5rem", fontSize: "0.9rem" }}>Ce qui se passe sur la plateforme, en bref.</p>
+      <PageHeader title="Activité" subtitle="Ce qui se passe sur la plateforme : utilisateurs, volumes, frais et points d'attention." updatedAt={formatDateTime(new Date())} />
+      <ErrorNote text={queryErrors ? `Certaines données n'ont pas pu être lues : ${queryErrors}` : null} />
 
-      {queryErrors.length > 0 && (
-        <div style={{ background: "#7f1d1d", color: "#fecaca", padding: "0.75rem 1rem", borderRadius: "8px", marginBottom: "1rem", fontSize: "0.85rem" }}>
-          Certaines données n'ont pas pu être lues : {queryErrors.join(" · ")}
+      <div className="wk-strip">
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Utilisateurs</div>
+          <div className="wk-strip-value">{totalUsers}</div>
+          <div className="wk-strip-sub">{newUsers} nouveau{newUsers > 1 ? "x" : ""} cette semaine</div>
         </div>
-      )}
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Actifs cette semaine</div>
+          <div className="wk-strip-value">{active}</div>
+          <div className="wk-strip-sub">{totalUsers ? `${Math.round((active / totalUsers) * 100)} % des utilisateurs` : "—"}</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Volume sur 7 jours</div>
+          <div className="wk-strip-value">{formatCompactUsd(volume7d)}</div>
+          <div className="wk-strip-sub">{count7d} transaction{count7d > 1 ? "s" : ""}</div>
+        </div>
+        <div className="wk-strip-item">
+          <div className="wk-strip-label">Frais gagnés</div>
+          <div className="wk-strip-value">{formatUsd(feesUsd)}</div>
+          <div className="wk-strip-sub">depuis le début</div>
+        </div>
+      </div>
 
-      <KpiGrid>
-        <Kpi label="Utilisateurs" value={String(totalUsers)} sub={`${newUsers} nouveau(x) cette semaine`} />
-        <Kpi label="Actifs cette semaine" value={String(active)} />
-        <Kpi label="Volume (7 jours)" value={formatUsd(volume)} sub={`${txCount} transactions`} />
-        <Kpi label="Frais gagnés (total)" value={formatUsd(feesUsd)} />
-      </KpiGrid>
+      <div className="wk-section wk-cols">
+        <div className="wk-panel">
+          <h3 className="wk-panel-title">Volume par jour</h3>
+          <p className="wk-panel-hint">Valeur en dollars des transactions, sur les 7 derniers jours.</p>
+          <VolumeChart days={days} />
+        </div>
+        <div className="wk-panel">
+          <h3 className="wk-panel-title">À surveiller</h3>
+          <p className="wk-panel-hint">Ce qui demande de l'attention.</p>
+          {watch.length === 0 ? (
+            <div className="wk-watch-item">
+              <span className="wk-dot wk-dot-ok" />
+              <span>Rien à signaler.</span>
+            </div>
+          ) : (
+            <div className="wk-watch">
+              {watch.map((w, i) => (
+                <div key={i} className="wk-watch-item">
+                  <span className={`wk-dot wk-dot-${w.tone}`} />
+                  <span>{w.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
-      <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: "2rem 0 0.75rem" }}>À surveiller</h2>
-      {watch.length === 0 ? (
-        <div style={{ background: "#14532d", color: "#bbf7d0", padding: "0.75rem 1rem", borderRadius: "8px", fontSize: "0.9rem" }}>Rien à signaler.</div>
-      ) : (
-        watch.map((w, i) => (
-          <div key={i} style={{ background: w.bad ? "#7f1d1d" : "#78350f", color: w.bad ? "#fecaca" : "#fde68a", padding: "0.75rem 1rem", borderRadius: "8px", marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-            {w.text}
+      <div className="wk-section wk-cols">
+        <div>
+          <div className="wk-section-head">
+            <h2 className="wk-h2">Transactions à vérifier</h2>
+            <p className="wk-hint">En attente, ou en échec cette semaine (les 15 plus récentes).</p>
           </div>
-        ))
-      )}
+          {toCheck.rows.length === 0 ? (
+            <Empty text="Aucune transaction à vérifier." />
+          ) : (
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Date</Th>
+                  <Th>Type</Th>
+                  <Th right>Montant</Th>
+                  <Th>Statut</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {toCheck.rows.map((t) => (
+                  <tr key={t.id}>
+                    <Td label="Date">{formatDate(t.created_at)}</Td>
+                    <Td label="Type">{TYPE_LABELS[t.type] || t.type}</Td>
+                    <Td right label="Montant">
+                      {formatNumber(Number(t.amount))} <span className="wk-asset-sub">{t.asset_symbol}</span>
+                    </Td>
+                    <Td label="Statut">{t.status === "failed" ? <Pill tone="bad">Échec</Pill> : <Pill tone="warn">En attente</Pill>}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </TableWrap>
+          )}
+        </div>
 
-      <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: "2rem 0 0.75rem" }}>Frais gagnés par actif</h2>
-      {feeRows.length === 0 ? (
-        <EmptyState text="Aucun frais collecté." />
-      ) : (
-        <TableShell>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              <Th>Actif</Th>
-              <Th align="right">Montant</Th>
-              <Th align="right">Valeur (USD)</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {feeRows.map((f) => (
-              <tr key={f.asset_symbol} style={{ borderTop: "1px solid #334155" }}>
-                <Td><strong style={{ color: "#f8fafc" }}>{f.asset_symbol}</strong></Td>
-                <Td align="right">{formatNumber(Number(f.total_fees))}</Td>
-                <Td align="right">{prices.has(f.asset_symbol) ? formatUsd(f.usd) : "—"}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </TableShell>
-      )}
-
-      <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: "2rem 0 0.25rem" }}>Transactions à vérifier</h2>
-      <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0 0 0.75rem" }}>En attente, ou en échec cette semaine (les 15 plus récentes).</p>
-      {toCheck.rows.length === 0 ? (
-        <EmptyState text="Aucune transaction à vérifier." />
-      ) : (
-        <TableShell>
-          <thead>
-            <tr style={{ background: "#0f172a" }}>
-              <Th>Date</Th>
-              <Th>Type</Th>
-              <Th>Actif</Th>
-              <Th align="right">Montant</Th>
-              <Th>Statut</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {toCheck.rows.map((t) => (
-              <tr key={t.id} style={{ borderTop: "1px solid #334155" }}>
-                <Td>{formatDate(t.created_at)}</Td>
-                <Td>{t.type}</Td>
-                <Td>{t.asset_symbol}</Td>
-                <Td align="right">{formatNumber(Number(t.amount))}</Td>
-                <Td><Badge tone={t.status === "failed" ? "bad" : "warn"}>{t.status === "failed" ? "échec" : "en attente"}</Badge></Td>
-              </tr>
-            ))}
-          </tbody>
-        </TableShell>
-      )}
+        <div>
+          <div className="wk-section-head">
+            <h2 className="wk-h2">Frais par actif</h2>
+            <p className="wk-hint">Part de chaque actif dans les frais gagnés.</p>
+          </div>
+          {feeRows.length === 0 ? (
+            <Empty text="Aucun frais collecté." />
+          ) : (
+            <div className="wk-panel">
+              <div className="wk-share">
+                {feeRows.map((f) => (
+                  <div key={f.asset} className="wk-share-row">
+                    <div className="wk-share-top">
+                      <span className="wk-asset">{f.asset}</span>
+                      <span>{f.priced ? formatUsd(f.usd) : formatNumber(f.total)}</span>
+                    </div>
+                    <div className="wk-share-track">
+                      <div className="wk-share-fill" style={{ width: `${feesUsd > 0 ? (f.usd / feesUsd) * 100 : 0}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function VolumeChart({ days }: { days: { key: string; label: string; usd: number }[] }) {
+  const W = 640;
+  const H = 230;
+  const top = 26;
+  const bottom = 30;
+  const max = Math.max(...days.map((d) => d.usd), 1);
+  const plotH = H - top - bottom;
+  const slot = W / days.length;
+  const barW = Math.min(46, slot * 0.56);
+
+  return (
+    <svg className="wk-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Volume par jour sur 7 jours">
+      {[0, 0.5, 1].map((f) => {
+        const y = top + plotH * (1 - f);
+        return <line key={f} x1={0} x2={W} y1={y} y2={y} stroke="var(--line)" strokeWidth={1} />;
+      })}
+      {days.map((d, i) => {
+        const h = d.usd > 0 ? Math.max((d.usd / max) * plotH, 2) : 0;
+        const x = i * slot + (slot - barW) / 2;
+        const y = top + plotH - h;
+        const isLast = i === days.length - 1;
+        return (
+          <g key={d.key}>
+            <title>{`${d.label} : ${formatUsd(d.usd)}`}</title>
+            <rect x={x} y={y} width={barW} height={h} rx={4} fill={isLast ? "var(--accent)" : "#8fbcc4"} />
+            <text className="wk-chart-value" x={x + barW / 2} y={Math.max(y - 6, 12)} textAnchor="middle">
+              {d.usd > 0 ? formatCompactUsd(d.usd) : ""}
+            </text>
+            <text className="wk-chart-label" x={x + barW / 2} y={H - 8} textAnchor="middle">
+              {d.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }

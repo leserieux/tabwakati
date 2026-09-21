@@ -8,8 +8,8 @@ import {
   getBtcBalances
 } from "@/lib/chain";
 import { toAlpha2 } from "@/lib/countries";
-import { formatNumber, formatUsd } from "@/lib/format";
-import { TableShell, Th, Td, Badge, EmptyState } from "@/components/ui";
+import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
+import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, Icon } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
 const EPS = 0.00000001;
 
 type Liab = { total: number; count: number };
-type Status = "covered" | "short" | "sweep" | "error";
+type Status = "covered" | "minor" | "short" | "sweep" | "error";
 
 /** Une ligne = un actif : ce que j'ai, ce que je dois, le résultat. */
 interface Line {
@@ -217,17 +217,30 @@ async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<string, numb
     });
   }
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
-  return { lines, error: pawapayError };
+  // On masque un actif sans rien de dû ni de détenu (ex. un pays pas encore utilisé)
+  return { lines: lines.filter((l) => l.owe > EPS || (l.have ?? 0) > EPS), error: pawapayError };
 }
 
 // ─────────────────────────────────── Page ───────────────────────────────────
 
-const ok = (n: number | null) => (n === null ? "—" : formatNumber(n));
+const MINOR_USD = 1; // en dessous, un manque est signalé « mineur »
 
 function gap(l: Line): number | null {
   return l.have === null ? null : l.have - l.owe;
 }
-
+function haveUsd(l: Line): number | null {
+  return l.have !== null && l.priceUsd !== null ? l.have * l.priceUsd : null;
+}
+function oweUsd(l: Line): number | null {
+  return l.priceUsd !== null ? l.owe * l.priceUsd : null;
+}
+function ratio(l: Line): number {
+  if (l.have === null) return 0;
+  return l.owe > EPS ? l.have / l.owe : 1;
+}
+function tone(s: Status): "ok" | "warn" | "bad" | "info" {
+  return s === "covered" ? "ok" : s === "short" || s === "error" ? "bad" : s === "minor" || s === "sweep" ? "warn" : "info";
+}
 function usd(l: Line, amount: number): string {
   return l.priceUsd !== null ? formatUsd(amount * l.priceUsd) : "";
 }
@@ -249,71 +262,140 @@ export default async function SolvencyPage() {
     loadError = e?.message || "Erreur de chargement";
   }
 
+  // Un manque de moins de 1 $ est « mineur » (poussière) et ne déclenche pas l'alerte rouge
+  const classify = (l: Line): Line => {
+    const g = gap(l);
+    if (l.status === "short" && g !== null && l.priceUsd !== null && Math.abs(g * l.priceUsd) < MINOR_USD) return { ...l, status: "minor" };
+    return l;
+  };
+  crypto = crypto.map(classify);
+  mobile = mobile.map(classify);
+
   const all = [...crypto, ...mobile];
   const short = all.filter((l) => l.status === "short");
+  const minor = all.filter((l) => l.status === "minor");
   const errors = all.filter((l) => l.status === "error");
   const toSweep = all.filter((l) => l.status === "sweep");
+
+  // Totaux en USD (actifs valorisés uniquement). La couverture ne compense pas un actif par un autre.
+  let held = 0;
+  let owed = 0;
+  let covered = 0;
+  for (const l of all) {
+    const h = haveUsd(l);
+    const o = oweUsd(l);
+    if (h === null || o === null) continue;
+    held += h;
+    owed += o;
+    covered += Math.min(h, o);
+  }
+  const coverage = owed > 0 ? covered / owed : 1;
   const missingUsd = short.reduce((n, l) => n + (l.priceUsd !== null ? -(gap(l) ?? 0) * l.priceUsd : 0), 0);
 
   // Actions concrètes, en français simple
-  const todo: string[] = [];
+  const todo: { tone: "bad" | "warn" | "info"; text: string }[] = [];
   for (const l of short) {
     const missing = -(gap(l) ?? 0);
     const u = usd(l, missing);
-    todo.push(
-      l.label.includes("PawaPay")
-        ? `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (≈ ${u})` : ""} chez PawaPay : approvisionne le compte marchand.`
-        : `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (≈ ${u})` : ""} : envoie-les sur l'adresse du treasury.`
-    );
+    todo.push({
+      tone: "bad",
+      text: l.label.includes("PawaPay")
+        ? `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (environ ${u})` : ""} chez PawaPay. Approvisionne le compte marchand.`
+        : `Il manque ${formatNumber(missing)} ${l.asset}${u ? ` (environ ${u})` : ""}. Envoie-les sur l'adresse du treasury.`
+    });
   }
-  for (const l of toSweep) todo.push(`${l.asset} : les fonds sont couverts, mais une partie est encore sur les adresses des utilisateurs (lance le balayage).`);
-  for (const l of errors) todo.push(`${l.label} : lecture impossible — ${l.error || "erreur inconnue"}.`);
+  for (const l of minor) {
+    const missing = -(gap(l) ?? 0);
+    const u = usd(l, missing);
+    todo.push({ tone: "warn", text: `Écart mineur sur ${l.asset} : il manque ${formatNumber(missing)}${u ? ` (environ ${u})` : ""}. À combler quand tu approvisionnes le treasury.` });
+  }
+  for (const l of toSweep) todo.push({ tone: "warn", text: `${l.asset} : les fonds sont couverts, mais une partie est encore sur les adresses des utilisateurs. Lance le balayage.` });
+  for (const l of errors) todo.push({ tone: "bad", text: `${l.label} : lecture impossible (${l.error || "erreur inconnue"}).` });
 
-  const banner =
-    loadError || (all.length === 0 && errors.length === 0)
-      ? { tone: "#7f1d1d", color: "#fecaca", title: "Impossible de calculer la solvabilité", text: loadError || "Aucune donnée." }
+  const hero =
+    loadError || all.length === 0
+      ? { tone: "bad" as const, icon: "x" as const, title: "Le calcul n'a pas pu être fait", text: loadError || "Aucune donnée disponible." }
       : short.length > 0
-        ? { tone: "#7f1d1d", color: "#fecaca", title: "Il manque de l'argent", text: missingUsd > 0 ? `Il manque environ ${formatUsd(missingUsd)} au total pour couvrir tout le monde.` : "Certains actifs ne sont pas couverts." }
+        ? { tone: "bad" as const, icon: "alert" as const, title: missingUsd > 0 ? `Il manque environ ${formatUsd(missingUsd)} pour couvrir tout le monde` : "Certains actifs ne sont pas couverts", text: "Les lignes en rouge ci-dessous indiquent quoi approvisionner." }
         : errors.length > 0
-          ? { tone: "#78350f", color: "#fde68a", title: "Certaines lectures ont échoué", text: "Le reste est couvert, mais je n'ai pas pu vérifier tous les soldes." }
-          : { tone: "#14532d", color: "#bbf7d0", title: "Tout est couvert", text: "Tu détiens assez pour rembourser tous les utilisateurs." };
+          ? { tone: "warn" as const, icon: "alert" as const, title: "Certaines lectures ont échoué", text: minor.length > 0 ? "Les autres actifs sont couverts ou n'ont qu'un écart mineur, mais tous les soldes n'ont pas pu être vérifiés." : "Les autres actifs sont couverts, mais tous les soldes n'ont pas pu être vérifiés." }
+          : { tone: "ok" as const, icon: "check" as const, title: "Tout est couvert", text: minor.length > 0 ? `Écarts mineurs (moins de ${formatUsd(MINOR_USD)}) sur ${minor.map((l) => l.asset).join(", ")}.` : "Tu détiens assez pour rembourser tous les utilisateurs." };
 
   return (
     <div>
-      <h1 style={{ color: "#f8fafc", marginBottom: "0.25rem" }}>Ai-je assez pour rembourser tout le monde ?</h1>
-      <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: "1.5rem", fontSize: "0.9rem" }}>
-        Chaque ligne compare l'argent réel que tu détiens à ce que tu dois aux utilisateurs. Actualisé à chaque chargement.
-      </p>
+      <PageHeader title="Solvabilité" subtitle="Compare l'argent réel que tu détiens à ce que tu dois aux utilisateurs, actif par actif." updatedAt={formatDateTime(new Date())} />
 
-      <div style={{ background: banner.tone, color: banner.color, padding: "1rem 1.25rem", borderRadius: "12px", marginBottom: "1.5rem" }}>
-        <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{banner.title}</div>
-        <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>{banner.text}</div>
+      <div className={`wk-hero wk-hero-${hero.tone}`}>
+        <div className="wk-hero-top">
+          <div className="wk-hero-msg">
+            <span className={`wk-hero-icon wk-hero-icon-${hero.tone}`}>
+              <Icon name={hero.icon} size={26} />
+            </span>
+            <div>
+              <h2 className="wk-hero-title">{hero.title}</h2>
+              <p className="wk-hero-text">{hero.text}</p>
+            </div>
+          </div>
+          {owed > 0 && (
+            <div className="wk-figures">
+              <div className="wk-figure">
+                <div className="wk-figure-label">Détenu</div>
+                <div className="wk-figure-value">{formatUsd(held)}</div>
+              </div>
+              <div className="wk-figure">
+                <div className="wk-figure-label">Dû aux utilisateurs</div>
+                <div className="wk-figure-value">{formatUsd(owed)}</div>
+              </div>
+              <div className="wk-figure">
+                <div className="wk-figure-label">Dû couvert</div>
+                <div className="wk-figure-value">{formatPct(coverage * 100)}</div>
+              </div>
+            </div>
+          )}
+        </div>
+        {owed > 0 && (
+          <div className="wk-meter">
+            <div className="wk-meter-track">
+              <div className={`wk-meter-fill wk-meter-${hero.tone}`} style={{ width: `${Math.min(coverage, 1) * 100}%` }} />
+            </div>
+            <div className="wk-meter-legend">
+              <span>0 %</span>
+              <span>Valeur en dollars des actifs cotés, hors WAKATI</span>
+              <span>100 %</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {todo.length > 0 && (
-        <div style={{ background: "#1e293b", borderRadius: "12px", padding: "1rem 1.25rem", marginBottom: "1.5rem" }}>
-          <div style={{ color: "#f8fafc", fontWeight: 600, marginBottom: "0.5rem" }}>À faire</div>
-          <ul style={{ color: "#cbd5e1", fontSize: "0.9rem", margin: 0, paddingLeft: "1.2rem", lineHeight: 1.7 }}>
+        <div className="wk-todo">
+          <h3 className="wk-todo-title">À faire</h3>
+          <ul className="wk-todo-list">
             {todo.map((t, i) => (
-              <li key={i}>{t}</li>
+              <li key={i} className="wk-todo-item">
+                <span className={`wk-dot wk-dot-${t.tone}`} />
+                <span>{t.text}</span>
+              </li>
             ))}
           </ul>
         </div>
       )}
 
+      <ErrorNote text={loadError} />
+
       <Section title="Crypto" hint="J'ai = treasury + fonds encore sur les adresses des utilisateurs.">
-        <LinesTable lines={crypto} empty="Aucune crypto due aux utilisateurs." />
+        <LinesTable lines={crypto} empty="Aucune crypto n'est due aux utilisateurs." />
       </Section>
 
-      <Section title="Argent mobile (PawaPay)" hint="J'ai = solde de ton compte marchand PawaPay, tous pays du même actif additionnés.">
+      <Section title="Argent mobile" hint="J'ai = solde de ton compte marchand PawaPay, tous pays du même actif additionnés.">
         <LinesTable lines={mobile} empty="Aucun pays actif." />
       </Section>
 
       {internal && (
-        <Section title="Token WAKATI" hint="Géré en interne : aucune réserve à couvrir ici.">
-          <div style={{ background: "#1e293b", borderRadius: "12px", padding: "1rem 1.25rem", color: "#cbd5e1", fontSize: "0.9rem" }}>
-            Tu dois <strong style={{ color: "#f8fafc" }}>{formatNumber(internal.total)} WAKATI</strong> à {internal.count} utilisateur(s)
-            {internal.priceUsd !== null ? ` (≈ ${formatUsd(internal.total * internal.priceUsd)}).` : "."}
+        <Section title="WAKATI" hint="Token géré en interne : il n'y a pas de réserve à couvrir.">
+          <div className="wk-note-box">
+            Tu dois <strong>{formatNumber(internal.total)} WAKATI</strong> à {internal.count} utilisateur{internal.count > 1 ? "s" : ""}
+            {internal.priceUsd !== null ? `, soit environ ${formatUsd(internal.total * internal.priceUsd)}.` : "."}
           </div>
         </Section>
       )}
@@ -321,48 +403,43 @@ export default async function SolvencyPage() {
   );
 }
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: "2rem" }}>
-      <h2 style={{ color: "#f8fafc", fontSize: "1.1rem", margin: 0 }}>{title}</h2>
-      {hint && <p style={{ color: "#64748b", fontSize: "0.8rem", margin: "0.2rem 0 0.75rem" }}>{hint}</p>}
-      {children}
-    </div>
-  );
-}
-
-function StatusBadge({ s }: { s: Status }) {
-  if (s === "covered") return <Badge tone="ok">Couvert</Badge>;
-  if (s === "sweep") return <Badge tone="warn">À balayer</Badge>;
-  if (s === "short") return <Badge tone="bad">Il manque</Badge>;
-  return <Badge tone="bad">Erreur</Badge>;
+function StatusPill({ s }: { s: Status }) {
+  if (s === "covered") return <Pill tone="ok">Couvert</Pill>;
+  if (s === "minor") return <Pill tone="warn">Écart mineur</Pill>;
+  if (s === "sweep") return <Pill tone="warn">À balayer</Pill>;
+  if (s === "short") return <Pill tone="bad">Il manque</Pill>;
+  return <Pill tone="bad">Erreur</Pill>;
 }
 
 function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
-  if (lines.length === 0) return <EmptyState text={empty} />;
+  if (lines.length === 0) return <Empty text={empty} />;
   return (
-    <TableShell>
+    <TableWrap>
       <thead>
-        <tr style={{ background: "#0f172a" }}>
+        <tr>
           <Th>Actif</Th>
-          <Th align="right">J'ai</Th>
-          <Th align="right">Je dois</Th>
-          <Th align="right">Écart</Th>
+          <Th right>J'ai</Th>
+          <Th right>Je dois</Th>
+          <Th hideSm>Couverture</Th>
+          <Th right>Écart</Th>
           <Th>Résultat</Th>
         </tr>
       </thead>
       <tbody>
         {lines.map((l) => {
           const g = gap(l);
-          const isShort = l.status === "short";
+          const negative = g !== null && g < -EPS;
+          const [name, sub] = l.label.split(" (");
           return (
-            <tr key={l.label} style={{ borderTop: "1px solid #334155", verticalAlign: "top" }}>
+            <tr key={l.label}>
               <Td>
-                <strong style={{ color: "#f8fafc" }}>{l.label}</strong>
+                <div className="wk-asset">
+                  {name} {sub && <span className="wk-asset-sub">{sub.replace(")", "")}</span>}
+                </div>
                 {l.details && l.details.length > 0 && (
-                  <details style={{ marginTop: "0.25rem" }}>
-                    <summary style={{ color: "#64748b", fontSize: "0.75rem", cursor: "pointer" }}>détail par pays</summary>
-                    <div style={{ color: "#94a3b8", fontSize: "0.75rem", lineHeight: 1.6 }}>
+                  <details className="wk-details">
+                    <summary>Détail par pays</summary>
+                    <div className="wk-details-body">
                       {l.details.map((d) => (
                         <div key={d.label}>
                           {d.label} : {formatNumber(d.value)}
@@ -372,29 +449,37 @@ function LinesTable({ lines, empty }: { lines: Line[]; empty: string }) {
                   </details>
                 )}
               </Td>
-              <Td align="right">
-                {l.error ? <span style={{ color: "#f87171", fontSize: "0.8rem" }}>{l.error}</span> : ok(l.have)}
-                {l.note && <div style={{ color: "#64748b", fontSize: "0.7rem" }}>{l.note}</div>}
+              <Td right label="J'ai">
+                {l.error ? <span className="wk-err">{l.error}</span> : l.have === null ? "—" : formatNumber(l.have)}
+                {l.note && <div className="wk-note">{l.note}</div>}
               </Td>
-              <Td align="right">{formatNumber(l.owe)}</Td>
-              <Td align="right">
+              <Td right label="Je dois">{formatNumber(l.owe)}</Td>
+              <Td hideSm>{l.have === null ? <span className="wk-usd">—</span> : <CoverageBar ratio={ratio(l)} tone={tone(l.status)} />}</Td>
+              <Td right label="Écart">
                 {g === null ? (
                   "—"
                 ) : (
-                  <span style={{ color: isShort ? "#f87171" : "#4ade80" }}>
-                    {g >= 0 ? "+" : ""}
-                    {formatNumber(g)}
-                    {usd(l, g) && <div style={{ fontSize: "0.7rem", opacity: 0.8 }}>{g >= 0 ? "+" : ""}{usd(l, g)}</div>}
-                  </span>
+                  <>
+                    <span className={negative ? "wk-neg" : "wk-pos"}>
+                      {g >= 0 ? "+" : ""}
+                      {formatNumber(g)}
+                    </span>
+                    {usd(l, g) && (
+                      <div className="wk-usd">
+                        {g >= 0 ? "+" : ""}
+                        {usd(l, g)}
+                      </div>
+                    )}
+                  </>
                 )}
               </Td>
-              <Td>
-                <StatusBadge s={l.status} />
+              <Td label="Résultat">
+                <StatusPill s={l.status} />
               </Td>
             </tr>
           );
         })}
       </tbody>
-    </TableShell>
+    </TableWrap>
   );
 }

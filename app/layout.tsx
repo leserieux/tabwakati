@@ -1,12 +1,14 @@
+import "./globals.css";
+
 export const metadata = {
-  title: "Wakati Dashboard",
-  description: "Dashboard interne Wakati"
+  title: "Wakati Console",
+  description: "Console d'administration Wakati"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <body style={{ margin: 0, background: "#0f172a" }}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

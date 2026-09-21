@@ -12,19 +12,8 @@ export default function LogoutButton() {
   }
 
   return (
-    <button
-      onClick={handleLogout}
-      style={{
-        background: "transparent",
-        border: "1px solid #334155",
-        color: "#94a3b8",
-        padding: "0.4rem 0.9rem",
-        borderRadius: "6px",
-        cursor: "pointer",
-        fontSize: "0.85rem"
-      }}
-    >
-      Déconnexion
+    <button onClick={handleLogout} className="wk-logout">
+      Se déconnecter
     </button>
   );
 }
