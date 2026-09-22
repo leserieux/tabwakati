@@ -36,7 +36,7 @@ export async function updateStakingPool(formData: FormData) {
   const id = str(formData, "id");
   const label = str(formData, "label") || id;
   const stakingType = str(formData, "staking_type") || "flexible";
-  const durationDays = stakingType === "locked" ? num(formData, "duration_days") : 0;
+  const lockPeriodDays = stakingType === "locked" ? num(formData, "lock_period_days") : 0;
   const apr = num(formData, "base_apy");
   const isActive = bool(formData, "is_active");
 
@@ -49,9 +49,11 @@ export async function updateStakingPool(formData: FormData) {
         base_apy: apr,
         min_stake: num(formData, "min_stake"),
         max_stake: numOrNull(formData, "max_stake"),
+        max_pool_capacity: numOrNull(formData, "max_pool_capacity"),
         staking_type: stakingType,
-        duration_days: durationDays,
-        early_withdrawal_penalty_pct: numOrNull(formData, "early_withdrawal_penalty_pct"),
+        lock_period_days: lockPeriodDays,
+        instant_unstake_enabled: bool(formData, "instant_unstake_enabled"),
+        instant_unstake_fee_percent: numOrNull(formData, "instant_unstake_fee_percent"),
         is_active: isActive,
         sort_order: num(formData, "sort_order") || 100,
         description: str(formData, "description") || null,
@@ -75,7 +77,7 @@ export async function addStakingPool(formData: FormData) {
   const name = str(formData, "name");
   const assetSymbol = str(formData, "asset_symbol");
   const stakingType = str(formData, "staking_type") || "flexible";
-  const durationDays = stakingType === "locked" ? num(formData, "duration_days") : 0;
+  const lockPeriodDays = stakingType === "locked" ? num(formData, "lock_period_days") : 0;
 
   await apply(`${name || assetSymbol} (ajouté)`, () =>
     getSupabaseAdmin()
@@ -86,9 +88,11 @@ export async function addStakingPool(formData: FormData) {
         base_apy: num(formData, "base_apy"),
         min_stake: num(formData, "min_stake"),
         max_stake: numOrNull(formData, "max_stake"),
+        max_pool_capacity: numOrNull(formData, "max_pool_capacity"),
         staking_type: stakingType,
-        duration_days: durationDays,
-        early_withdrawal_penalty_pct: numOrNull(formData, "early_withdrawal_penalty_pct"),
+        lock_period_days: lockPeriodDays,
+        instant_unstake_enabled: bool(formData, "instant_unstake_enabled"),
+        instant_unstake_fee_percent: numOrNull(formData, "instant_unstake_fee_percent"),
         is_active: bool(formData, "is_active"),
         sort_order: num(formData, "sort_order") || 100,
         description: str(formData, "description") || null
