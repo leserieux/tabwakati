@@ -8,7 +8,8 @@ const GROUPS = [
     label: "Console",
     items: [
       { href: "/dashboard/treasury", label: "Solvabilité", icon: "shield" as const },
-      { href: "/dashboard/activity", label: "Activité", icon: "activity" as const }
+      { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
+      { href: "/dashboard/settings", label: "Paramètres", icon: "gear" as const }
     ]
   },
   {
