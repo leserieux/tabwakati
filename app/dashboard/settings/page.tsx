@@ -2,9 +2,11 @@ import React from "react";
 import { getSupabaseAdmin, q } from "@/lib/data";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader, Section } from "@/components/ui";
-import { DeleteCountryButton } from "./DeleteCountryButton";
+import { ConfirmDeleteButton } from "./ConfirmDeleteButton";
 import {
-  updateStakingConfig,
+  updateStakingPool,
+  addStakingPool,
+  deleteStakingPool,
   updateWheelConfig,
   updatePredictionConfig,
   updateScoreCreditConfig,
@@ -68,6 +70,20 @@ function ProviderSelect({ label, name, defaultValue, providers, allowNone }: { l
   );
 }
 
+function SelectField({ label, name, defaultValue, options, hint }: { label: string; name: string; defaultValue: string; options: { value: string; label: string }[]; hint?: string }) {
+  return (
+    <div>
+      <label className="wk-label" htmlFor={name}>{label}</label>
+      <select id={name} name={name} defaultValue={defaultValue} className="wk-input">
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      {hint && <div className="wk-hint" style={{ marginTop: 4 }}>{hint}</div>}
+    </div>
+  );
+}
+
 function Toggle({ label, name, defaultChecked }: { label: string; name: string; defaultChecked: boolean }) {
   return (
     <label className="wk-field-toggle">
@@ -100,24 +116,23 @@ function Card({ title, hint, updatedAt, headerExtra, action, children }: { title
 
 export default async function SettingsPage({ searchParams }: { searchParams: { saved?: string; error?: string; msg?: string } }) {
   const db = getSupabaseAdmin();
-  const [staking, wheel, prediction, scoreCredit, campay, assets, countries, providers] = await Promise.all([
-    q<any>(db.from("staking_config").select("*").eq("id", 1).limit(1)),
+  const [wheel, prediction, scoreCredit, campay, assets, countries, providers, stakingPools] = await Promise.all([
     q<any>(db.from("wheel_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("prediction_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("score_credit_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("campay_config").select("*").eq("id", 1).limit(1)),
     q<{ symbol: string; name: string; is_active: boolean }>(db.from("supported_assets").select("symbol, name, is_active").order("symbol")),
     q<any>(db.from("payment_countries").select("*").order("sort_order")),
-    q<{ code: string; name: string; is_active: boolean }>(db.from("payment_providers").select("code, name, is_active").order("code"))
+    q<{ code: string; name: string; is_active: boolean }>(db.from("payment_providers").select("code, name, is_active").order("code")),
+    q<any>(db.from("staking_pools").select("*").order("sort_order").order("created_at"))
   ]);
 
-  const s = staking.rows[0];
   const w = wheel.rows[0];
   const p = prediction.rows[0];
   const sc = scoreCredit.rows[0];
   const c = campay.rows[0];
 
-  const queryErrors = [staking.error, wheel.error, prediction.error, scoreCredit.error, campay.error, assets.error, countries.error, providers.error].filter(Boolean).join(" · ");
+  const queryErrors = [wheel.error, prediction.error, scoreCredit.error, campay.error, assets.error, countries.error, providers.error, stakingPools.error].filter(Boolean).join(" · ");
   const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
 
   return (
@@ -136,14 +151,84 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
         </div>
       )}
 
-      {s ? (
-        <Card title="Staking" hint="Taux annuel appliqué au pool unique de staking WAKATI." updatedAt={fmtUpdated(s.updated_at)} action={updateStakingConfig}>
-          <Field label="APR (%)" name="apr" defaultValue={s.apr} hint="Récompense/jour = montant × apr / 100 / 365." />
-          <Toggle label="Staking actif" name="is_active" defaultChecked={s.is_active} />
-        </Card>
-      ) : (
-        <div className="wk-alert-bad">Section Staking : aucune ligne trouvée dans staking_config (id=1).</div>
-      )}
+      <Section title="Plans de staking" hint="Plan flexible (retrait à tout moment) ou bloqué (durée fixe, pénalité de retrait anticipé optionnelle). Chaque plan a son propre APR, min/max et statut.">
+        {stakingPools.rows.length === 0 ? (
+          <div className="wk-alert-bad">Aucun plan trouvé dans staking_pools.</div>
+        ) : (
+          stakingPools.rows.map((sp: any) => (
+            <Card
+              key={sp.id}
+              title={`${sp.name} (${sp.asset_symbol})`}
+              hint={`${sp.staking_type === "locked" ? `Bloqué ${sp.duration_days} jours` : "Flexible — retrait à tout moment"}. ${Number(sp.total_staked).toLocaleString("fr-FR")} ${sp.asset_symbol} actuellement en staking sur ce plan.`}
+              updatedAt={fmtUpdated(sp.updated_at)}
+              action={updateStakingPool}
+              headerExtra={
+                <ConfirmDeleteButton
+                  action={deleteStakingPool}
+                  hiddenFields={{ id: sp.id, label: `${sp.name} (${sp.asset_symbol})` }}
+                  confirmText={`Supprimer le plan « ${sp.name} » ? Impossible s'il reste des dépôts actifs dessus. Cette action est irréversible.`}
+                />
+              }
+            >
+              <input type="hidden" name="id" value={sp.id} />
+              <input type="hidden" name="label" value={`${sp.name} (${sp.asset_symbol})`} />
+              <TextField label="Nom" name="name" defaultValue={sp.name} />
+              <SelectField
+                label="Type"
+                name="staking_type"
+                defaultValue={sp.staking_type}
+                options={[
+                  { value: "flexible", label: "Flexible" },
+                  { value: "locked", label: "Bloqué" }
+                ]}
+              />
+              <Field label="Durée (jours)" name="duration_days" step="1" defaultValue={sp.duration_days} hint="Ignoré si le type est Flexible." />
+              <Field label="APR (%)" name="base_apy" defaultValue={sp.base_apy} hint="Récompense/jour = montant × apr / 100 / 365." />
+              <Field label="Dépôt min" name="min_stake" defaultValue={sp.min_stake} />
+              <Field label="Dépôt max" name="max_stake" defaultValue={sp.max_stake ?? ""} hint="Vide = illimité." />
+              <Field label="Pénalité retrait anticipé (%)" name="early_withdrawal_penalty_pct" defaultValue={sp.early_withdrawal_penalty_pct ?? ""} hint="Vide = retrait anticipé non autorisé (plans bloqués)." />
+              <Field label="Ordre d'affichage" name="sort_order" step="1" defaultValue={sp.sort_order} />
+              <Toggle label="Plan actif" name="is_active" defaultChecked={sp.is_active} />
+              <TextField label="Description (visible des utilisateurs)" name="description" defaultValue={sp.description || ""} />
+            </Card>
+          ))
+        )}
+
+        <div className="wk-settings-card">
+          <div className="wk-settings-head">
+            <div>
+              <h3 className="wk-settings-title">Ajouter un plan de staking</h3>
+              <p className="wk-settings-hint">
+                Rappel : ceci crée le plan côté base de données seulement. Pour qu'un plan « Bloqué » empêche vraiment un retrait anticipé, l'application utilisateur doit aussi être mise à jour pour vérifier la date de déblocage.
+              </p>
+            </div>
+          </div>
+          <form action={addStakingPool}>
+            <div className="wk-form-grid">
+              <TextField label="Nom" name="name" defaultValue="" />
+              <AssetSelect label="Actif" name="asset_symbol" defaultValue="WAKATI" assets={assets.rows} />
+              <SelectField
+                label="Type"
+                name="staking_type"
+                defaultValue="flexible"
+                options={[
+                  { value: "flexible", label: "Flexible" },
+                  { value: "locked", label: "Bloqué" }
+                ]}
+              />
+              <Field label="Durée (jours)" name="duration_days" step="1" defaultValue={0} hint="Ignoré si le type est Flexible." />
+              <Field label="APR (%)" name="base_apy" defaultValue={0} />
+              <Field label="Dépôt min" name="min_stake" defaultValue={0} />
+              <Field label="Dépôt max" name="max_stake" defaultValue="" hint="Vide = illimité." />
+              <Field label="Pénalité retrait anticipé (%)" name="early_withdrawal_penalty_pct" defaultValue="" hint="Vide = retrait anticipé non autorisé." />
+              <Field label="Ordre d'affichage" name="sort_order" step="1" defaultValue={100} />
+              <Toggle label="Plan actif" name="is_active" defaultChecked={false} />
+              <TextField label="Description (visible des utilisateurs)" name="description" defaultValue="" />
+            </div>
+            <button type="submit" className="wk-submit-sm">Ajouter le plan</button>
+          </form>
+        </div>
+      </Section>
 
       {w ? (
         <Card title="Roue de la fortune" hint="Spins gratuits, coût des spins payants et jackpot." updatedAt={fmtUpdated(w.updated_at)} action={updateWheelConfig}>
@@ -203,7 +288,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
               hint={`Indicatif ${ct.dial_code} · téléphone à ${ct.phone_digits_min}-${ct.phone_digits_max} chiffres.`}
               updatedAt={fmtUpdated(ct.updated_at)}
               action={updatePaymentCountry}
-              headerExtra={<DeleteCountryButton action={deletePaymentCountry} isoCode={ct.iso_code} label={`${ct.name} (${ct.iso_code})`} />}
+              headerExtra={
+                <ConfirmDeleteButton
+                  action={deletePaymentCountry}
+                  hiddenFields={{ iso_code: ct.iso_code, label: `${ct.name} (${ct.iso_code})` }}
+                  confirmText={`Supprimer définitivement ${ct.name} (${ct.iso_code}) ? Cette action est irréversible.`}
+                />
+              }
             >
               <input type="hidden" name="iso_code" value={ct.iso_code} />
               <input type="hidden" name="label" value={`${ct.name} (${ct.iso_code})`} />

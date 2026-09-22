@@ -32,17 +32,75 @@ async function apply(label: string, update: () => PromiseLike<{ error: { message
   redirect(`${PATH}?saved=${encodeURIComponent(label)}`);
 }
 
-export async function updateStakingConfig(formData: FormData) {
-  await apply("Staking", () =>
-    getSupabaseAdmin()
-      .from("staking_config")
+export async function updateStakingPool(formData: FormData) {
+  const id = str(formData, "id");
+  const label = str(formData, "label") || id;
+  const stakingType = str(formData, "staking_type") || "flexible";
+  const durationDays = stakingType === "locked" ? num(formData, "duration_days") : 0;
+  const apr = num(formData, "base_apy");
+  const isActive = bool(formData, "is_active");
+
+  await apply(label, async () => {
+    const db = getSupabaseAdmin();
+    const { error } = await db
+      .from("staking_pools")
       .update({
-        apr: num(formData, "apr"),
-        is_active: bool(formData, "is_active"),
-        updated_at: new Date().toISOString(),
-        updated_by: "admin"
+        name: str(formData, "name"),
+        base_apy: apr,
+        min_stake: num(formData, "min_stake"),
+        max_stake: numOrNull(formData, "max_stake"),
+        staking_type: stakingType,
+        duration_days: durationDays,
+        early_withdrawal_penalty_pct: numOrNull(formData, "early_withdrawal_penalty_pct"),
+        is_active: isActive,
+        sort_order: num(formData, "sort_order") || 100,
+        description: str(formData, "description") || null,
+        updated_at: new Date().toISOString()
       })
-      .eq("id", 1)
+      .eq("id", id);
+
+    // staking_config est une table historique globale, encore lue par endroits :
+    // on ne la garde en synchro que pour le pool flexible (celui qu'elle représentait à l'origine).
+    if (!error && stakingType === "flexible") {
+      await db
+        .from("staking_config")
+        .update({ apr, is_active: isActive, updated_at: new Date().toISOString(), updated_by: "admin" })
+        .eq("id", 1);
+    }
+    return { error };
+  });
+}
+
+export async function addStakingPool(formData: FormData) {
+  const name = str(formData, "name");
+  const assetSymbol = str(formData, "asset_symbol");
+  const stakingType = str(formData, "staking_type") || "flexible";
+  const durationDays = stakingType === "locked" ? num(formData, "duration_days") : 0;
+
+  await apply(`${name || assetSymbol} (ajouté)`, () =>
+    getSupabaseAdmin()
+      .from("staking_pools")
+      .insert({
+        name,
+        asset_symbol: assetSymbol,
+        base_apy: num(formData, "base_apy"),
+        min_stake: num(formData, "min_stake"),
+        max_stake: numOrNull(formData, "max_stake"),
+        staking_type: stakingType,
+        duration_days: durationDays,
+        early_withdrawal_penalty_pct: numOrNull(formData, "early_withdrawal_penalty_pct"),
+        is_active: bool(formData, "is_active"),
+        sort_order: num(formData, "sort_order") || 100,
+        description: str(formData, "description") || null
+      })
+  );
+}
+
+export async function deleteStakingPool(formData: FormData) {
+  const id = str(formData, "id");
+  const label = str(formData, "label") || id;
+  await apply(`${label} supprimé`, () =>
+    getSupabaseAdmin().from("staking_pools").delete().eq("id", id)
   );
 }
 
