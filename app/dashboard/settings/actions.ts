@@ -20,7 +20,7 @@ function bool(fd: FormData, key: string): boolean {
   return fd.get(key) === "on";
 }
 
-async function apply(section: string, update: () => Promise<{ error: { message: string } | null }>) {
+async function apply(section: string, update: () => PromiseLike<{ error: { message: string } | null }>) {
   const { error } = await update();
   revalidatePath(PATH);
   if (error) redirect(`${PATH}?error=${encodeURIComponent(section)}&msg=${encodeURIComponent(error.message)}`);
