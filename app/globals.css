@@ -199,6 +199,9 @@ a { color: inherit; }
 .wk-field-toggle { display: flex; align-items: center; gap: 8px; padding-top: 22px; }
 .wk-submit-sm { padding: 9px 18px; border: none; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .wk-submit-sm:hover { background: #094652; }
+.wk-input-sm { width: 90px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px; font: inherit; font-size: 13.5px; background: #fff; color: var(--text); text-align: right; }
+.wk-danger-link { background: none; border: none; padding: 0; color: var(--bad); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; text-decoration: underline; }
+.wk-danger-link:hover { color: #7a1a15; }
 
 /* ───────── Activité ───────── */
 .wk-strip { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
