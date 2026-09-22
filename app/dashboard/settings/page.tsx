@@ -159,7 +159,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
             <Card
               key={sp.id}
               title={`${sp.name} (${sp.asset_symbol})`}
-              hint={`${sp.staking_type === "locked" ? `Bloqué ${sp.duration_days} jours` : "Flexible — retrait à tout moment"}. ${Number(sp.total_staked).toLocaleString("fr-FR")} ${sp.asset_symbol} actuellement en staking sur ce plan.`}
+              hint={`${sp.staking_type === "locked" ? `Bloqué ${sp.lock_period_days} jours` : "Flexible — retrait à tout moment"}. ${Number(sp.total_staked).toLocaleString("fr-FR")} ${sp.asset_symbol} actuellement en staking sur ce plan.`}
               updatedAt={fmtUpdated(sp.updated_at)}
               action={updateStakingPool}
               headerExtra={
@@ -182,11 +182,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
                   { value: "locked", label: "Bloqué" }
                 ]}
               />
-              <Field label="Durée (jours)" name="duration_days" step="1" defaultValue={sp.duration_days} hint="Ignoré si le type est Flexible." />
+              <Field label="Durée (jours)" name="lock_period_days" step="1" defaultValue={sp.lock_period_days} hint="Ignoré si le type est Flexible." />
               <Field label="APR (%)" name="base_apy" defaultValue={sp.base_apy} hint="Récompense/jour = montant × apr / 100 / 365." />
               <Field label="Dépôt min" name="min_stake" defaultValue={sp.min_stake} />
-              <Field label="Dépôt max" name="max_stake" defaultValue={sp.max_stake ?? ""} hint="Vide = illimité." />
-              <Field label="Pénalité retrait anticipé (%)" name="early_withdrawal_penalty_pct" defaultValue={sp.early_withdrawal_penalty_pct ?? ""} hint="Vide = retrait anticipé non autorisé (plans bloqués)." />
+              <Field label="Dépôt max (par utilisateur)" name="max_stake" defaultValue={sp.max_stake ?? ""} hint="Vide = illimité." />
+              <Field label="Capacité totale du plan" name="max_pool_capacity" defaultValue={sp.max_pool_capacity ?? ""} hint="Vide = illimité. Tous utilisateurs confondus." />
+              <Toggle label="Retrait anticipé autorisé" name="instant_unstake_enabled" defaultChecked={sp.instant_unstake_enabled} />
+              <Field label="Frais de retrait anticipé (%)" name="instant_unstake_fee_percent" defaultValue={sp.instant_unstake_fee_percent ?? ""} hint="Appliqué si retrait avant la fin du blocage." />
               <Field label="Ordre d'affichage" name="sort_order" step="1" defaultValue={sp.sort_order} />
               <Toggle label="Plan actif" name="is_active" defaultChecked={sp.is_active} />
               <TextField label="Description (visible des utilisateurs)" name="description" defaultValue={sp.description || ""} />
@@ -199,7 +201,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
             <div>
               <h3 className="wk-settings-title">Ajouter un plan de staking</h3>
               <p className="wk-settings-hint">
-                Rappel : ceci crée le plan côté base de données seulement. Pour qu'un plan « Bloqué » empêche vraiment un retrait anticipé, l'application utilisateur doit aussi être mise à jour pour vérifier la date de déblocage.
+                Le blocage est appliqué côté serveur (fn_stake/fn_unstake) — un plan « Bloqué » empêche vraiment le retrait avant la fin de la durée, sauf si « Retrait anticipé autorisé » est coché.
               </p>
             </div>
           </div>
@@ -216,11 +218,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
                   { value: "locked", label: "Bloqué" }
                 ]}
               />
-              <Field label="Durée (jours)" name="duration_days" step="1" defaultValue={0} hint="Ignoré si le type est Flexible." />
+              <Field label="Durée (jours)" name="lock_period_days" step="1" defaultValue={0} hint="Ignoré si le type est Flexible." />
               <Field label="APR (%)" name="base_apy" defaultValue={0} />
               <Field label="Dépôt min" name="min_stake" defaultValue={0} />
-              <Field label="Dépôt max" name="max_stake" defaultValue="" hint="Vide = illimité." />
-              <Field label="Pénalité retrait anticipé (%)" name="early_withdrawal_penalty_pct" defaultValue="" hint="Vide = retrait anticipé non autorisé." />
+              <Field label="Dépôt max (par utilisateur)" name="max_stake" defaultValue="" hint="Vide = illimité." />
+              <Field label="Capacité totale du plan" name="max_pool_capacity" defaultValue="" hint="Vide = illimité." />
+              <Toggle label="Retrait anticipé autorisé" name="instant_unstake_enabled" defaultChecked={true} />
+              <Field label="Frais de retrait anticipé (%)" name="instant_unstake_fee_percent" defaultValue="" hint="Appliqué si retrait avant la fin du blocage." />
               <Field label="Ordre d'affichage" name="sort_order" step="1" defaultValue={100} />
               <Toggle label="Plan actif" name="is_active" defaultChecked={false} />
               <TextField label="Description (visible des utilisateurs)" name="description" defaultValue="" />
