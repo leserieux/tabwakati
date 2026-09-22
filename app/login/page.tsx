@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -17,7 +18,7 @@ export default function LoginPage() {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ password, name })
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -47,9 +48,11 @@ export default function LoginPage() {
       <div className="wk-login-form-side">
         <form onSubmit={handleSubmit} className="wk-login-form">
           <h1>Connexion</h1>
-          <p>Entre le mot de passe administrateur.</p>
-          <label className="wk-label" htmlFor="password">Mot de passe</label>
-          <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="wk-input" autoFocus autoComplete="current-password" />
+          <p>Entre ton prénom et le mot de passe administrateur.</p>
+          <label className="wk-label" htmlFor="name">Prénom</label>
+          <input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} className="wk-input" autoFocus autoComplete="name" placeholder="Ex : Yannick" />
+          <label className="wk-label" htmlFor="password" style={{ marginTop: 12 }}>Mot de passe</label>
+          <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="wk-input" autoComplete="current-password" />
           {error && <p className="wk-form-error" role="alert">{error}</p>}
           <button type="submit" disabled={loading} className="wk-submit">
             {loading ? "Connexion en cours" : "Se connecter"}

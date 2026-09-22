@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
+import { verifySessionToken, getSessionActor, SESSION_COOKIE_NAME } from "@/lib/auth";
 import LogoutButton from "./logout-button";
 import Nav from "@/components/nav";
 
@@ -12,6 +12,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!verifySessionToken(token)) {
     redirect("/login");
   }
+
+  const actor = getSessionActor(token);
 
   return (
     <div className="wk-shell">
@@ -25,6 +27,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
         <Nav />
         <div className="wk-side-foot">
+          {actor && <div className="wk-brand-sub" style={{ marginBottom: 8 }}>Connecté : {actor}</div>}
           <LogoutButton />
         </div>
       </aside>

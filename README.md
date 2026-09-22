@@ -59,10 +59,21 @@ définis pas.
   les règles RLS). Elle n'est utilisée que côté serveur (Server Components /
   API routes Next.js), jamais envoyée au navigateur — c'est la configuration
   standard et sûre pour ce genre de tableau de bord interne.
-- L'authentification est volontairement simple (mot de passe + cookie signé
-  HMAC, 12h de validité) puisque tu es seul à y accéder. Si plusieurs
-  personnes doivent y accéder un jour avec des rôles différents, on pourra
-  passer à une vraie auth (Supabase Auth, par exemple).
+- L'authentification reste un mot de passe partagé (cookie signé HMAC, 12h de
+  validité), mais chaque session porte désormais le **prénom** saisi à la
+  connexion : il sert à attribuer chaque action du **journal d'audit**
+  (`/dashboard/audit`) à la bonne personne. Ce n'est pas une vraie identité
+  vérifiée (rien n'empêche de taper n'importe quel prénom) — si plusieurs
+  personnes doivent y accéder avec de vrais comptes et des rôles différents,
+  il faudra passer à une vraie auth (Supabase Auth, par exemple).
+- **Journal d'audit** : toute modification depuis `/dashboard/settings`
+  (staking, roue, prédictions, crédit, pays de paiement, Campay) est
+  enregistrée dans la table `admin_audit_log` — qui, quoi, avant/après,
+  succès ou échec. Applique la migration
+  `supabase/migrations/20260922_admin_audit_log.sql` (SQL Editor de Supabase,
+  ou `supabase db push` si tu utilises la CLI) avant de déployer cette
+  version, sinon les pages `/dashboard/settings` et `/dashboard/audit`
+  afficheront une erreur de lecture/écriture sur cette table.
 - Les adresses treasury sont **publiques** par nature (comme un RIB) — les
   avoir dans les variables d'environnement n'est pas un risque de sécurité.
   Ce qui doit rester secret, c'est uniquement `TREASURY_MNEMONIC` /
