@@ -81,10 +81,12 @@ définis pas.
 
 ## Prochaines sections prévues
 
-- Vue d'ensemble (volumes, users actifs, frais collectés)
-- Transactions (recherche, filtre, alertes sur les `processing` bloquées)
-- Paramètres (édition directe des tables de config)
-- Utilisateurs
-- Santé système (statut webhooks)
+- Alerting (Slack/email) sur les seuils déjà détectés par le dashboard
+- Paramètres (édition directe des tables de config) — fait
+- Transactions (recherche, filtre, export CSV) — fait
+- Utilisateurs (recherche, fiche détail)
+- Prêts / crédit score (portefeuille, défauts)
+- Jeux (roue, prédictions) — RTP, marge, anomalies
+- Santé système (statut des providers de paiement)
 
 Dis-moi quand tu veux qu'on attaque la suivante.

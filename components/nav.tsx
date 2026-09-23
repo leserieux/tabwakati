@@ -9,6 +9,7 @@ const GROUPS = [
     items: [
       { href: "/dashboard/treasury", label: "Solvabilité", icon: "shield" as const },
       { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
+      { href: "/dashboard/transactions", label: "Transactions", icon: "grid" as const },
       { href: "/dashboard/settings", label: "Paramètres", icon: "gear" as const },
       { href: "/dashboard/audit", label: "Journal d'audit", icon: "log" as const }
     ]
