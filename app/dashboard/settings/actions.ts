@@ -59,18 +59,113 @@ async function apply(opts: {
   redirect(`${PATH}?saved=${encodeURIComponent(opts.summary)}`);
 }
 
-export async function updateStakingConfig(formData: FormData) {
-  const patch = { apr: num(formData, "apr"), is_active: bool(formData, "is_active") };
-  const before = await fetchOne("staking_config", "id", 1);
+export async function updateStakingPool(formData: FormData) {
+  const id = str(formData, "id");
+  const label = str(formData, "label") || id;
+  const stakingType = str(formData, "staking_type") || "flexible";
+  const lockPeriodDays = stakingType === "locked" ? num(formData, "lock_period_days") : 0;
+  const apr = num(formData, "base_apy");
+  const isActive = bool(formData, "is_active");
+
+  const patch = {
+    name: str(formData, "name"),
+    base_apy: apr,
+    min_stake: num(formData, "min_stake"),
+    max_stake: numOrNull(formData, "max_stake"),
+    max_pool_capacity: numOrNull(formData, "max_pool_capacity"),
+    staking_type: stakingType,
+    lock_period_days: lockPeriodDays,
+    instant_unstake_enabled: bool(formData, "instant_unstake_enabled"),
+    instant_unstake_fee_percent: numOrNull(formData, "instant_unstake_fee_percent"),
+    is_active: isActive,
+    sort_order: num(formData, "sort_order") || 100,
+    description: str(formData, "description") || null
+  };
+  const before = await fetchOne("staking_pools", "id", id);
+
   await apply({
-    action: "settings.staking.update",
-    summary: "Staking",
-    target: "staking_config#1",
+    action: "settings.staking_pool.update",
+    summary: label,
+    target: `staking_pools#${id}`,
+    changes: diffFields(before, patch),
+    run: async () => {
+      const db = getSupabaseAdmin();
+      const { error } = await db
+        .from("staking_pools")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("id", id);
+
+      // staking_config est une table historique encore lue par get_my_staking() (affichage
+      // de l'ancien écran simple) : on la garde alignée pour le plan flexible d'origine.
+      // Le calcul réel des récompenses (fn_stake/fn_unstake) lit directement staking_pools.
+      if (!error && stakingType === "flexible") {
+        await db
+          .from("staking_config")
+          .update({ apr, is_active: isActive, updated_at: new Date().toISOString(), updated_by: getCurrentActor() })
+          .eq("id", 1);
+      }
+      return { error };
+    }
+  });
+}
+
+export async function addStakingPool(formData: FormData) {
+  const name = str(formData, "name");
+  const assetSymbol = str(formData, "asset_symbol");
+  const stakingType = str(formData, "staking_type") || "flexible";
+  const lockPeriodDays = stakingType === "locked" ? num(formData, "lock_period_days") : 0;
+  const insertRow = {
+    name,
+    asset_symbol: assetSymbol,
+    base_apy: num(formData, "base_apy"),
+    min_stake: num(formData, "min_stake"),
+    max_stake: numOrNull(formData, "max_stake"),
+    max_pool_capacity: numOrNull(formData, "max_pool_capacity"),
+    staking_type: stakingType,
+    lock_period_days: lockPeriodDays,
+    instant_unstake_enabled: bool(formData, "instant_unstake_enabled"),
+    instant_unstake_fee_percent: numOrNull(formData, "instant_unstake_fee_percent"),
+    is_active: bool(formData, "is_active"),
+    sort_order: num(formData, "sort_order") || 100,
+    description: str(formData, "description") || null
+  };
+  await apply({
+    action: "settings.staking_pool.create",
+    summary: `${name || assetSymbol} (ajouté)`,
+    target: `staking_pools#${assetSymbol}`,
+    changes: diffFields(null, insertRow),
+    run: () => getSupabaseAdmin().from("staking_pools").insert(insertRow)
+  });
+}
+
+export async function deleteStakingPool(formData: FormData) {
+  const id = str(formData, "id");
+  const label = str(formData, "label") || id;
+  await apply({
+    action: "settings.staking_pool.delete",
+    summary: `${label} supprimé`,
+    target: `staking_pools#${id}`,
+    run: () => getSupabaseAdmin().from("staking_pools").delete().eq("id", id)
+  });
+}
+
+export async function updateWakatiReserveState(formData: FormData) {
+  const patch = {
+    profit_share_pct: num(formData, "profit_share_pct"),
+    max_daily_change_pct: num(formData, "max_daily_change_pct"),
+    price_floor_usd: num(formData, "price_floor_usd"),
+    is_active: bool(formData, "is_active")
+  };
+  const before = await fetchOne("wakati_reserve_state", "id", 1);
+  await apply({
+    action: "settings.wakati_reserve_state.update",
+    summary: "Prix WAKATI",
+    target: "wakati_reserve_state#1",
     changes: diffFields(before, patch),
     run: () =>
       getSupabaseAdmin()
-        .from("staking_config")
-        .update({ ...patch, updated_at: new Date().toISOString(), updated_by: getCurrentActor() })
+        .from("wakati_reserve_state")
+        .update(patch)
         .eq("id", 1)
   });
 }
