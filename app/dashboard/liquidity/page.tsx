@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
-import { getNativeBalance, getTokenBalance, getBtcBalance } from "@/lib/chain";
+import { loadOnchainCustody } from "@/lib/custody";
+import { loadWakatiInApp } from "@/lib/wakati";
 import { formatNumber, formatToken, formatUsd, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote, type Tone } from "@/components/ui";
 import { adjustLiquidity } from "./actions";
@@ -7,12 +8,7 @@ import { adjustLiquidity } from "./actions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
-const TREASURY_BTC_ADDRESS = process.env.TREASURY_BTC_ADDRESS || "";
 const EPS = 0.00000001;
-// Écart toléré entre le solde interne (utilisé pour gater les swaps) et le solde réel on-chain,
-// avant qu'on considère ça comme un signal à vérifier plutôt qu'un simple arrondi.
-const DRIFT_ALERT_RATIO = 0.02; // 2 %
 
 type Asset = {
   symbol: string;
@@ -50,14 +46,15 @@ interface Line {
   name: string;
   network: string;
   canSwap: boolean;
-  ledger: number | null; // treasury_wallets.balance — ce que le swap vérifie réellement
-  onchain: number | null; // solde réel sur l'adresse trésor
-  onchainError?: string;
   isFiat: boolean;
+  ledger: number | null; // treasury_wallets.balance — ce que le swap vérifie réellement
+  reference: number | null; // ce à quoi on compare la réserve pour juger si elle est "couverte"
+  referenceLabel: string;
+  referenceNote?: string;
+  referenceError?: string;
   swapVolume: number;
   swapFees: number;
   priceUsd: number | null;
-  updatedAt: string | null;
 }
 
 const ENTRY_TYPE_LABELS: Record<string, string> = {
@@ -73,31 +70,14 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
   liquidation: "Liquidation"
 };
 
-async function loadOnchain(asset: Asset): Promise<{ value: number | null; error?: string }> {
-  if (asset.network === "Fiat") return { value: null };
-  try {
-    if (asset.symbol === "BTC") {
-      if (!TREASURY_BTC_ADDRESS) return { value: null, error: "TREASURY_BTC_ADDRESS non configurée" };
-      return { value: await getBtcBalance(TREASURY_BTC_ADDRESS) };
-    }
-    if (!TREASURY_EVM_ADDRESS) return { value: null, error: "TREASURY_EVM_ADDRESS non configurée" };
-    const network = asset.network.toLowerCase();
-    const value = asset.contract_address
-      ? await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, asset.decimals || 18)
-      : await getNativeBalance(network, TREASURY_EVM_ADDRESS);
-    return { value };
-  } catch (e: any) {
-    return { value: null, error: e?.message || "Erreur de lecture on-chain" };
-  }
-}
-
 async function loadLines(): Promise<{ lines: Line[]; error?: string }> {
   const db = getSupabaseAdmin();
-  const [assetsRes, walletsRes, metricsRes, prices] = await Promise.all([
+  const [assetsRes, walletsRes, metricsRes, prices, wk] = await Promise.all([
     q<Asset>(db.from("supported_assets").select("symbol, name, network, contract_address, decimals, can_be_swapped").eq("is_active", true)),
     q<Wallet>(db.from("treasury_wallets").select("*")),
     q<Metrics>(db.from("supported_assets_metrics").select("asset_symbol, total_swap_volume, total_swap_fees_collected")),
-    loadPrices()
+    loadPrices(),
+    loadWakatiInApp()
   ]);
 
   if (assetsRes.error) return { lines: [], error: assetsRes.error };
@@ -108,40 +88,68 @@ async function loadLines(): Promise<{ lines: Line[]; error?: string }> {
   // On ne montre que les actifs swappables, ou ceux qui ont déjà une réserve (au cas où can_be_swapped a changé depuis).
   const assets = assetsRes.rows.filter((a) => a.can_be_swapped || walletOf.has(a.symbol));
 
-  const lines = await Promise.all(
-    assets.map(async (asset): Promise<Line> => {
-      const wallet = walletOf.get(asset.symbol);
-      const { value: onchain, error: onchainError } = await loadOnchain(asset);
-      const metrics = metricsOf.get(asset.symbol);
+  // Lecture on-chain groupée pour tous les actifs crypto non-WAKATI (WAKATI a sa propre logique de référence ci-dessous).
+  const custody = await loadOnchainCustody(assets.filter((a) => a.symbol !== "WAKATI"));
 
-      return {
-        asset: asset.symbol,
-        name: asset.name,
-        network: asset.network,
-        canSwap: asset.can_be_swapped,
-        ledger: wallet ? Number(wallet.balance) : null,
-        onchain,
-        onchainError,
-        isFiat: asset.network === "Fiat",
-        swapVolume: Number(metrics?.total_swap_volume || 0),
-        swapFees: Number(metrics?.total_swap_fees_collected || 0),
-        priceUsd: prices.get(asset.symbol) ?? null,
-        updatedAt: wallet?.updated_at ?? null
-      };
-    })
-  );
+  const lines: Line[] = assets.map((asset) => {
+    const wallet = walletOf.get(asset.symbol);
+    const metrics = metricsOf.get(asset.symbol);
+    const ledger = wallet ? Number(wallet.balance) : null;
+    const isFiat = asset.network === "Fiat";
+
+    let reference: number | null = null;
+    let referenceLabel = "On-chain (trésor + adresses utilisateurs)";
+    let referenceNote: string | undefined;
+    let referenceError: string | undefined;
+
+    if (asset.symbol === "WAKATI") {
+      // WAKATI est le jeton natif de la plateforme : le solde on-chain de l'adresse trésor n'a pas de sens à
+      // comparer directement (elle détient l'essentiel de l'offre, minée ou non). La vraie question est :
+      // la réserve interne suffit-elle à couvrir ce que les utilisateurs détiennent déjà dans l'appli ?
+      reference = wk.error ? null : wk.total;
+      referenceLabel = "Détenu par les utilisateurs (circulation)";
+      referenceError = wk.error;
+    } else if (isFiat) {
+      referenceLabel = "— (fiat, pas de vérification on-chain)";
+    } else {
+      const c = custody.get(asset.symbol);
+      reference = c?.total ?? null;
+      referenceError = c?.error;
+      if (c && c.users > EPS) referenceNote = `dont ${formatNumber(c.users)} encore sur des adresses utilisateurs non balayées`;
+    }
+
+    return {
+      asset: asset.symbol,
+      name: asset.name,
+      network: asset.network,
+      canSwap: asset.can_be_swapped,
+      isFiat,
+      ledger,
+      reference,
+      referenceLabel,
+      referenceNote,
+      referenceError,
+      swapVolume: Number(metrics?.total_swap_volume || 0),
+      swapFees: Number(metrics?.total_swap_fees_collected || 0),
+      priceUsd: prices.get(asset.symbol) ?? null
+    };
+  });
 
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
   return { lines };
 }
 
+/**
+ * Un écart n'est un problème QUE dans un sens : la réserve interne (ce que le swap promet) qui dépasse
+ * ce qui est réellement détenu (on-chain, ou — pour WAKATI — ce que les utilisateurs détiennent déjà).
+ * Réserve <= référence : toujours normal, quelle que soit l'ampleur de l'écart.
+ */
 function driftInfo(l: Line): { drift: number | null; tone: Tone } {
-  if (l.ledger === null || l.onchain === null) return { drift: null, tone: "info" };
-  const drift = l.ledger - l.onchain;
-  const base = Math.max(l.onchain, l.ledger, EPS);
-  if (Math.abs(drift) / base <= DRIFT_ALERT_RATIO) return { drift, tone: "ok" };
-  // La réserve interne promet plus que ce que le trésor détient réellement : risque pour les swaps.
-  return { drift, tone: drift > 0 ? "bad" : "warn" };
+  if (l.ledger === null || l.reference === null) return { drift: null, tone: "info" };
+  const drift = l.ledger - l.reference;
+  const tolerance = Math.max(0.000001, l.reference * 0.005); // dust / latence de lecture
+  if (drift <= tolerance) return { drift, tone: "ok" };
+  return { drift, tone: "bad" };
 }
 
 function reserveTone(l: Line): Tone {
@@ -150,12 +158,25 @@ function reserveTone(l: Line): Tone {
   return "ok";
 }
 
+function combinedTone(l: Line): Tone {
+  const rt = reserveTone(l);
+  if (rt !== "ok") return rt;
+  return driftInfo(l).tone;
+}
+
 function fmt(l: Line, n: number): string {
   return l.asset === "WAKATI" ? formatToken(n) : formatNumber(n);
 }
 
 function usd(l: Line, n: number): string | null {
   return l.priceUsd ? formatUsd(n * l.priceUsd) : null;
+}
+
+function StatePill({ tone }: { tone: Tone }) {
+  if (tone === "ok") return <Pill tone="ok">OK</Pill>;
+  if (tone === "warn") return <Pill tone="warn">À surveiller</Pill>;
+  if (tone === "info") return <Pill tone="info">Non vérifiable</Pill>;
+  return <Pill tone="bad">Problème</Pill>;
 }
 
 export default async function LiquidityPage({
@@ -175,14 +196,17 @@ export default async function LiquidityPage({
     )
   ]);
 
-  const alerts = lines.filter((l) => reserveTone(l) !== "ok" || driftInfo(l).tone === "bad");
+  const alerts = lines.filter((l) => {
+    const rt = reserveTone(l);
+    return rt !== "ok" || driftInfo(l).tone === "bad";
+  });
   const swappableAssets = lines.filter((l) => l.canSwap);
 
   return (
     <div>
       <PageHeader
         title="Liquidité (swap)"
-        subtitle="Réserve interne qui garantit chaque swap, comparée au trésor réel — et l'historique des mouvements."
+        subtitle="Réserve interne qui garantit chaque swap, comparée à ce qui la couvre réellement — et l'historique des mouvements."
         updatedAt={formatDateTime(new Date())}
       />
       <ErrorNote text={error ? `Certains actifs n'ont pas pu être lus : ${error}` : null} />
@@ -191,11 +215,12 @@ export default async function LiquidityPage({
 
       <div className="wk-callout" style={{ marginBottom: 4 }}>
         <strong>Comment ça marche.</strong> Il n'y a pas de pool par paire (type AMM) : chaque swap est honoré directement
-        par une réserve unique par actif (<code>treasury_wallets</code>). Si cette réserve n'a pas assez de l'actif demandé,
-        le swap échoue pour l'utilisateur — c'est cette réserve qu'on surveille et ajuste ici.
+        par une réserve unique par actif (<code>treasury_wallets</code>). Un écart n'est un problème que dans un sens :
+        réserve interne <em>supérieure</em> à ce qui la couvre réellement (le trésor on-chain pour les cryptos, la
+        circulation utilisateurs pour WAKATI). Dans l'autre sens, c'est normal — voire sain.
       </div>
 
-      <Section title="À surveiller" hint="Réserves absentes, épuisées, ou qui promettent plus que ce que le trésor détient réellement.">
+      <Section title="À surveiller" hint="Réserves absentes, épuisées, ou qui promettent plus que ce qui les couvre réellement.">
         {alerts.length === 0 ? (
           <div className="wk-watch-item"><span className="wk-dot wk-dot-ok" /><span>Rien à signaler.</span></div>
         ) : (
@@ -204,12 +229,20 @@ export default async function LiquidityPage({
               const rt = reserveTone(l);
               const d = driftInfo(l);
               let text = "";
-              if (rt === "bad") text = `${l.asset} : réserve jamais initialisée — les swaps vers cet actif échoueront.`;
-              else if (rt === "warn") text = `${l.asset} : réserve à sec (${fmt(l, l.ledger ?? 0)}) malgré une activité de swap passée.`;
-              else if (d.tone === "bad") text = `${l.asset} : la réserve interne (${fmt(l, l.ledger ?? 0)}) dépasse le solde on-chain réel (${fmt(l, l.onchain ?? 0)}) de plus de ${(DRIFT_ALERT_RATIO * 100).toFixed(0)} % — à vérifier.`;
+              let tone: "bad" | "warn" = "warn";
+              if (rt === "bad") {
+                text = `${l.asset} : réserve jamais initialisée — les swaps vers cet actif échoueront.`;
+                tone = "bad";
+              } else if (rt === "warn") {
+                text = `${l.asset} : réserve à sec (${fmt(l, l.ledger ?? 0)}) malgré une activité de swap passée.`;
+                tone = "warn";
+              } else if (d.tone === "bad") {
+                text = `${l.asset} : la réserve interne (${fmt(l, l.ledger ?? 0)}) dépasse ${l.referenceLabel.toLowerCase()} (${fmt(l, l.reference ?? 0)}).`;
+                tone = "bad";
+              }
               return (
                 <div key={l.asset} className="wk-watch-item">
-                  <span className={`wk-dot wk-dot-${rt === "bad" || d.tone === "bad" ? "bad" : "warn"}`} />
+                  <span className={`wk-dot wk-dot-${tone}`} />
                   <span>{text}</span>
                 </div>
               );
@@ -218,13 +251,13 @@ export default async function LiquidityPage({
         )}
       </Section>
 
-      <Section title="Réserves par actif" hint="« Réserve » = ce que le swap vérifie. « On-chain » = ce que le trésor détient vraiment sur son adresse publique.">
+      <Section title="Réserves par actif" hint="« Réserve » = ce que le swap vérifie. « Référence » = ce qui doit la couvrir (le trésor on-chain pour les cryptos, la circulation utilisateurs pour WAKATI).">
         <TableWrap>
           <thead>
             <tr>
               <Th>Actif</Th>
               <Th right>Réserve (swap)</Th>
-              <Th right hideSm>On-chain (trésor)</Th>
+              <Th right hideSm>Référence</Th>
               <Th right hideSm>Écart</Th>
               <Th right hideSm>Volume swap (total)</Th>
               <Th right hideSm>Frais swap (total)</Th>
@@ -234,8 +267,7 @@ export default async function LiquidityPage({
           <tbody>
             {lines.map((l) => {
               const d = driftInfo(l);
-              const rt = reserveTone(l);
-              const tone: Tone = rt !== "ok" ? rt : d.tone;
+              const tone = combinedTone(l);
               return (
                 <tr key={l.asset}>
                   <Td>
@@ -246,12 +278,22 @@ export default async function LiquidityPage({
                     {l.ledger === null ? <span className="wk-err">non initialisée</span> : fmt(l, l.ledger)}
                     {l.ledger !== null && usd(l, l.ledger) && <div className="wk-usd">{usd(l, l.ledger)}</div>}
                   </Td>
-                  <Td right label="On-chain (trésor)" hideSm>
-                    {l.isFiat ? <span className="wk-asset-sub">— (fiat)</span> : l.onchainError ? <span className="wk-err">{l.onchainError}</span> : l.onchain === null ? "—" : fmt(l, l.onchain)}
+                  <Td right label="Référence" hideSm>
+                    {l.referenceError ? (
+                      <span className="wk-err">{l.referenceError}</span>
+                    ) : l.reference === null ? (
+                      <span className="wk-asset-sub">{l.isFiat ? "— (fiat)" : "—"}</span>
+                    ) : (
+                      fmt(l, l.reference)
+                    )}
+                    {l.referenceNote && <div className="wk-note">{l.referenceNote}</div>}
+                    <div className="wk-asset-sub">{l.referenceLabel}</div>
                   </Td>
                   <Td right label="Écart" hideSm>
-                    {d.drift === null ? "—" : (
-                      <span className={d.drift > EPS ? "wk-pos" : d.drift < -EPS ? "wk-neg" : undefined}>
+                    {d.drift === null ? (
+                      "—"
+                    ) : (
+                      <span className={d.drift > EPS ? "wk-neg" : "wk-pos"}>
                         {d.drift >= 0 ? "+" : ""}{fmt(l, d.drift)}
                       </span>
                     )}
@@ -259,7 +301,7 @@ export default async function LiquidityPage({
                   <Td right label="Volume swap (total)" hideSm>{fmt(l, l.swapVolume)}</Td>
                   <Td right label="Frais swap (total)" hideSm>{fmt(l, l.swapFees)}</Td>
                   <Td label="État">
-                    {tone === "ok" ? <Pill tone="ok">OK</Pill> : tone === "warn" ? <Pill tone="warn">À surveiller</Pill> : <Pill tone="bad">Problème</Pill>}
+                    <StatePill tone={tone} />
                   </Td>
                 </tr>
               );

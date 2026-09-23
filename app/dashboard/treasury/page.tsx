@@ -1,12 +1,5 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
-import {
-  getNativeBalance,
-  getTokenBalance,
-  getBtcBalance,
-  getNativeBalances,
-  getTokenBalances,
-  getBtcBalances
-} from "@/lib/chain";
+import { loadOnchainCustody } from "@/lib/custody";
 import { toAlpha2 } from "@/lib/countries";
 import { loadWakatiInApp } from "@/lib/wakati";
 import { formatNumber, formatToken, formatCompactNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
@@ -14,9 +7,6 @@ import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, Icon,
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
-const TREASURY_BTC_ADDRESS = process.env.TREASURY_BTC_ADDRESS || "";
 
 // Tokens gérés en interne : aucune réserve à couvrir ici
 const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
@@ -59,20 +49,12 @@ function computeStatus(have: number | null, owe: number, treasuryOnly: number | 
 
 async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[] }> {
   const db = getSupabaseAdmin();
-  const [{ data: assets, error: assetsError }, { data: userAddrs }] = await Promise.all([
-    db.from("supported_assets").select("symbol, network, contract_address, decimals").neq("network", "Fiat").eq("is_active", true),
-    db.from("user_addresses").select("asset_symbol, address").eq("is_active", true)
-  ]);
+  const { data: assets, error: assetsError } = await db
+    .from("supported_assets")
+    .select("symbol, network, contract_address, decimals")
+    .neq("network", "Fiat")
+    .eq("is_active", true);
   if (assetsError) throw new Error(`Impossible de lire les actifs (${assetsError.message})`);
-
-  const treasuryLower = new Set([TREASURY_EVM_ADDRESS, TREASURY_BTC_ADDRESS].filter(Boolean).map((a) => a.toLowerCase()));
-  const addrMap = new Map<string, string[]>();
-  for (const a of userAddrs || []) {
-    if (!a.address || treasuryLower.has(String(a.address).toLowerCase())) continue;
-    const list = addrMap.get(a.asset_symbol) || [];
-    if (!list.includes(a.address)) list.push(a.address);
-    addrMap.set(a.asset_symbol, list);
-  }
 
   const toRead = (assets || []).filter((a) => {
     const l = liab.get(a.symbol) || { total: 0, count: 0 };
@@ -80,68 +62,31 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
     return !(l.total === 0 && l.count === 0);
   });
 
-  const lines = await Promise.all(
-    toRead.map(async (asset): Promise<Line> => {
-      const owe = liab.get(asset.symbol)?.total ?? 0;
-      const addresses = addrMap.get(asset.symbol) || [];
-      const network = asset.network.toLowerCase();
-      const decimals = asset.decimals || 18;
+  const custody = await loadOnchainCustody(toRead);
 
-      let treasury: number | null = null;
-      let users: number | null = null;
-      let usersFailed = 0;
-      let error: string | undefined;
+  const lines: Line[] = toRead.map((asset) => {
+    const owe = liab.get(asset.symbol)?.total ?? 0;
+    const c = custody.get(asset.symbol);
+    const treasury = c?.treasury ?? null;
+    const users = c?.users ?? 0;
+    const usersFailed = c?.usersFailed ?? 0;
+    const have = c?.total ?? null;
 
-      await Promise.all([
-        (async () => {
-          try {
-            if (asset.symbol === "BTC") {
-              if (!TREASURY_BTC_ADDRESS) throw new Error("TREASURY_BTC_ADDRESS non configurée");
-              treasury = await getBtcBalance(TREASURY_BTC_ADDRESS);
-            } else {
-              if (!TREASURY_EVM_ADDRESS) throw new Error("TREASURY_EVM_ADDRESS non configurée");
-              treasury = asset.contract_address
-                ? await getTokenBalance(network, asset.contract_address, TREASURY_EVM_ADDRESS, decimals)
-                : await getNativeBalance(network, TREASURY_EVM_ADDRESS);
-            }
-          } catch (e: any) {
-            error = e?.message || "Erreur inconnue";
-          }
-        })(),
-        (async () => {
-          try {
-            const r =
-              asset.symbol === "BTC"
-                ? await getBtcBalances(addresses)
-                : asset.contract_address
-                  ? await getTokenBalances(network, asset.contract_address, addresses, decimals)
-                  : await getNativeBalances(network, addresses);
-            users = r.total;
-            usersFailed = r.failed;
-          } catch {
-            users = null;
-            usersFailed = addresses.length;
-          }
-        })()
-      ]);
+    const noteParts: string[] = [];
+    if (users > EPS) noteParts.push(`dont ${formatNumber(users)} encore sur les adresses des utilisateurs`);
+    if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
 
-      const have = treasury !== null ? treasury + (users ?? 0) : null;
-      const noteParts: string[] = [];
-      if ((users ?? 0) > EPS) noteParts.push(`dont ${formatNumber(users ?? 0)} encore sur les adresses des utilisateurs`);
-      if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
-
-      return {
-        asset: asset.symbol,
-        label: `${asset.symbol} (${asset.network})`,
-        have,
-        owe,
-        note: noteParts.join(" · ") || undefined,
-        status: computeStatus(have, owe, treasury),
-        priceUsd: prices.get(asset.symbol) ?? null,
-        error
-      };
-    })
-  );
+    return {
+      asset: asset.symbol,
+      label: `${asset.symbol} (${asset.network})`,
+      have,
+      owe,
+      note: noteParts.join(" · ") || undefined,
+      status: computeStatus(have, owe, treasury),
+      priceUsd: prices.get(asset.symbol) ?? null,
+      error: c?.error
+    };
+  });
 
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
 
