@@ -1,6 +1,6 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
 import { loadOnchainCustody } from "@/lib/custody";
-import { toAlpha2 } from "@/lib/countries";
+import { fetchPawapayWallets } from "@/lib/pawapay";
 import { loadWakatiInApp } from "@/lib/wakati";
 import { formatNumber, formatToken, formatCompactNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, Icon, SegmentBar, Swatch, SEG } from "@/components/ui";
@@ -91,37 +91,6 @@ async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>):
   lines.sort((a, b) => a.asset.localeCompare(b.asset));
 
   return { lines };
-}
-
-interface Wallet {
-  country: string; // alpha-2
-  currency: string;
-  balance: number;
-}
-
-async function fetchPawapayWallets(): Promise<{ wallets: Wallet[]; error?: string }> {
-  const secret = (process.env.DASHBOARD_API_SECRET || "").trim();
-  const supabaseUrl = process.env.SUPABASE_URL;
-  if (!secret || !supabaseUrl) return { wallets: [], error: "DASHBOARD_API_SECRET ou SUPABASE_URL manquant dans Vercel" };
-
-  try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/dashboard-pawapay-balance`, {
-      headers: { "x-dashboard-secret": secret },
-      cache: "no-store"
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) return { wallets: [], error: body.error || `PawaPay a répondu ${res.status}` };
-    if (!Array.isArray(body.balances)) return { wallets: [], error: "Réponse PawaPay inattendue" };
-
-    const wallets: Wallet[] = body.balances.map((b: any) => ({
-      country: toAlpha2(String(b.country || "")),
-      currency: String(b.currency || ""),
-      balance: Number(b.balance) || 0
-    }));
-    return { wallets };
-  } catch (e: any) {
-    return { wallets: [], error: e?.message || "Erreur réseau vers PawaPay" };
-  }
 }
 
 async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; error?: string }> {
