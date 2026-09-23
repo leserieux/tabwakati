@@ -84,6 +84,7 @@ définis pas.
 - Alerting (Slack/email) sur les seuils déjà détectés par le dashboard
 - Paramètres (édition directe des tables de config) — fait
 - Transactions (recherche, filtre, export CSV) — fait
+- Liquidité (swap) — réserve par actif, écart vs on-chain, ajout/retrait — fait
 - Utilisateurs (recherche, fiche détail)
 - Prêts / crédit score (portefeuille, défauts)
 - Jeux (roue, prédictions) — RTP, marge, anomalies
