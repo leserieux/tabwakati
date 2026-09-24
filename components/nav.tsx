@@ -1,5 +1,3 @@
-"use client";
-
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui";
 
@@ -7,6 +5,7 @@ const GROUPS = [
   {
     label: "Console",
     items: [
+      { href: "/dashboard", label: "Vue d'ensemble", icon: "grid" as const },
       { href: "/dashboard/treasury", label: "Solvabilité", icon: "shield" as const },
       { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
       { href: "/dashboard/transactions", label: "Transactions", icon: "grid" as const },
