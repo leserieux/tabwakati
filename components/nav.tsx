@@ -6,7 +6,6 @@ import { Icon } from "@/components/ui";
 const GROUPS = [
   { label: "Console", items: [
     { href: "/dashboard", label: "Vue d'ensemble", icon: "grid" as const },
-    { href: "/dashboard/analytics", label: "Analytics plateforme", icon: "activity" as const },
     { href: "/dashboard/treasury", label: "Solvabilité", icon: "shield" as const },
     { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
     { href: "/dashboard/users", label: "Utilisateurs", icon: "users" as const },
