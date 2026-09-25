@@ -22,7 +22,17 @@ const GROUPS = [
   ] }
 ];
 
-export default function Nav() {
+export default function Nav({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
-  return <nav className="wk-nav" aria-label="Navigation principale">{GROUPS.map((group) => <div key={group.label} className="wk-navgroup"><div className="wk-navgroup-label">{group.label}</div>{group.items.map((item) => <a key={item.href} href={item.href} className={`wk-navitem ${pathname === item.href ? "active" : ""}`}><Icon name={item.icon} size={16} /><span>{item.label}</span></a>)}</div>)}</nav>;
+  return <nav className="wk-nav" aria-label="Navigation principale">
+    {GROUPS.map((group) => <div key={group.label} className="wk-navgroup">
+      <div className="wk-navgroup-label">{group.label}</div>
+      <div className="wk-navgroup-items">{group.items.map((item) => {
+        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        return <a key={item.href} href={item.href} className={`wk-navitem ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? item.label : undefined}>
+          <span className="wk-navicon"><Icon name={item.icon} size={16} /></span><span>{item.label}</span>
+        </a>;
+      })}</div>
+    </div>)}
+  </nav>;
 }

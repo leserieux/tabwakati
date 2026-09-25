@@ -1,8 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { verifySessionToken, getSessionActor, SESSION_COOKIE_NAME } from "@/lib/auth";
-import LogoutButton from "./logout-button";
-import Nav from "@/components/nav";
+import DashboardShell from "@/components/dashboard-shell";
 
 export const runtime = "nodejs";
 
@@ -13,27 +12,5 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
-  const actor = getSessionActor(token);
-
-  return (
-    <div className="wk-shell">
-      <aside className="wk-side">
-        <div className="wk-brand">
-          <div className="wk-mark">W</div>
-          <div>
-            <div className="wk-brand-name">Wakati</div>
-            <div className="wk-brand-sub">Console d'administration</div>
-          </div>
-        </div>
-        <Nav />
-        <div className="wk-side-foot">
-          {actor && <div className="wk-brand-sub" style={{ marginBottom: 8 }}>Connecté : {actor}</div>}
-          <LogoutButton />
-        </div>
-      </aside>
-      <main className="wk-main">
-        <div className="wk-page">{children}</div>
-      </main>
-    </div>
-  );
+  return <DashboardShell actor={getSessionActor(token)}>{children}</DashboardShell>;
 }
