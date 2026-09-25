@@ -1,7 +1,8 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { loadUserPerformance } from "@/lib/user-performance";
 import { loadUserWindowSummaries } from "@/lib/user-analytics";
-import { formatCompactNumber, formatDateTime, formatNumber, formatToken, formatUsd, shortId } from "@/lib/format";
+import { buildUserDecisionSummary } from "@/lib/user-decision";
+import { formatCompactNumber, formatDateTime, formatToken, formatUsd, shortId } from "@/lib/format";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -78,83 +79,19 @@ type RiskFlagRow = {
   detected_at: string | null;
 };
 
-export default async function UserDetailPage({
-  params,
-  searchParams,
-}: {
-  params: { id: string };
-  searchParams?: { asset?: string };
-}) {
+export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string } }) {
   const db = getSupabaseAdmin();
   const selectedAsset = (searchParams?.asset || "").trim();
 
-  const [
-    userRes,
-    balances,
-    transactions,
-    prices,
-    kyc,
-    limits,
-    riskScoreRes,
-    riskFlags,
-    performance,
-    windows,
-  ] = await Promise.all([
-    db
-      .from("users")
-      .select(
-        "id, username, email, phone, country_code, is_verified, email_confirmed, profile_completed, user_level, experience_points, created_at, updated_at"
-      )
-      .eq("id", params.id)
-      .limit(1),
-    q<Balance>(
-      db
-        .from("user_balances")
-        .select(
-          "asset_symbol, available_balance, staking_balance, pending_balance, total_deposited, total_withdrawn, total_earned_staking"
-        )
-        .eq("user_id", params.id)
-    ),
-    q<Tx>(
-      db
-        .from("transactions")
-        .select("id, type, asset_symbol, amount, fee, status, created_at, tx_hash")
-        .eq("user_id", params.id)
-        .order("created_at", { ascending: false })
-        .limit(100)
-    ),
+  const [userRes, balances, transactions, prices, kyc, limits, riskScoreRes, riskFlags, performance, windows] = await Promise.all([
+    db.from("users").select("id, username, email, phone, country_code, is_verified, email_confirmed, profile_completed, user_level, experience_points, created_at, updated_at").eq("id", params.id).limit(1),
+    q<Balance>(db.from("user_balances").select("asset_symbol, available_balance, staking_balance, pending_balance, total_deposited, total_withdrawn, total_earned_staking").eq("user_id", params.id)),
+    q<Tx>(db.from("transactions").select("id, type, asset_symbol, amount, fee, status, created_at, tx_hash").eq("user_id", params.id).order("created_at", { ascending: false }).limit(100)),
     loadPrices(),
-    q<Kyc>(
-      db
-        .from("user_kyc")
-        .select("verification_level, verification_status, verified_at, expiry_date, rejection_reason")
-        .eq("user_id", params.id)
-        .limit(1)
-    ),
-    q<Limits>(
-      db
-        .from("user_transaction_limits")
-        .select(
-          "daily_withdraw_limit, daily_withdraw_used, daily_deposit_limit, daily_deposit_used, monthly_withdraw_limit, monthly_withdraw_used"
-        )
-        .eq("user_id", params.id)
-        .limit(1)
-    ),
-    q<RiskScoreRow>(
-      db
-        .from("user_risk_scores_current")
-        .select("score, level, reasons, calculated_at")
-        .eq("user_id", params.id)
-        .limit(1)
-    ),
-    q<RiskFlagRow>(
-      db
-        .from("user_risk_flags")
-        .select("title, description, severity, status, asset_symbol, score_impact, detected_at")
-        .eq("user_id", params.id)
-        .order("detected_at", { ascending: false })
-        .limit(10)
-    ),
+    q<Kyc>(db.from("user_kyc").select("verification_level, verification_status, verified_at, expiry_date, rejection_reason").eq("user_id", params.id).limit(1)),
+    q<Limits>(db.from("user_transaction_limits").select("daily_withdraw_limit, daily_withdraw_used, daily_deposit_limit, daily_deposit_used, monthly_withdraw_limit, monthly_withdraw_used").eq("user_id", params.id).limit(1)),
+    q<RiskScoreRow>(db.from("user_risk_scores_current").select("score, level, reasons, calculated_at").eq("user_id", params.id).limit(1)),
+    q<RiskFlagRow>(db.from("user_risk_flags").select("title, description, severity, status, asset_symbol, score_impact, detected_at").eq("user_id", params.id).order("detected_at", { ascending: false }).limit(10)),
     loadUserPerformance(params.id),
     loadUserWindowSummaries(params.id),
   ]);
@@ -204,36 +141,18 @@ export default async function UserDetailPage({
   const totalNetVariation = performance.rows.reduce((sum, row) => sum + Number(row.variation || 0), 0);
   const totalRewards = performance.rows.reduce((sum, row) => sum + Number(row.rewards || 0), 0);
   const totalFees = performance.rows.reduce((sum, row) => sum + Number(row.fees || 0), 0);
+  const decision = buildUserDecisionSummary(windows.rows, { score: riskScore?.score ?? null, level: riskScore?.level ?? null }, kyc.rows[0]?.verification_status ?? null);
 
-  const visibleTx = selectedAsset
-    ? transactions.rows.filter((row) => row.asset_symbol === selectedAsset)
-    : transactions.rows;
-
-  const performanceRows = selectedAsset
-    ? performance.rows.filter((row) => row.asset === selectedAsset)
-    : performance.rows;
-
+  const visibleTx = selectedAsset ? transactions.rows.filter((row) => row.asset_symbol === selectedAsset) : transactions.rows;
+  const performanceRows = selectedAsset ? performance.rows.filter((row) => row.asset === selectedAsset) : performance.rows;
   const kycRow = kyc.rows[0] || null;
   const limitRow = limits.rows[0] || null;
 
-  const queryErrors = [
-    balances.error,
-    transactions.error,
-    kyc.error,
-    limits.error,
-    riskScoreRes.error,
-    riskFlags.error,
-    performance.error,
-    windows.error,
-  ].filter(Boolean);
+  const queryErrors = [balances.error, transactions.error, kyc.error, limits.error, riskScoreRes.error, riskFlags.error, performance.error, windows.error].filter(Boolean);
 
   return (
     <div>
-      <PageHeader
-        title={user.username || "Utilisateur"}
-        subtitle={`Compte ${shortId(user.id)} · profil, risque, actifs et performance`}
-        updatedAt={formatDateTime(new Date())}
-      />
+      <PageHeader title={user.username || "Utilisateur"} subtitle={`Compte ${shortId(user.id)} · profil, risque, actifs et performance`} updatedAt={formatDateTime(new Date())} />
       <ErrorNote text={queryErrors.length ? `Certaines données sont indisponibles : ${queryErrors.join(" · ")}` : null} />
 
       <div className="wk-strip" style={{ marginBottom: 18 }}>
@@ -243,6 +162,18 @@ export default async function UserDetailPage({
         <StatCard label="Variation nette" value={formatToken(totalNetVariation)} sub="Flux + solde" />
         <StatCard label="Risque" value={riskScore ? `${riskScore.score ?? 0}/100` : "—"} sub={riskScore?.level || "normal"} tone={riskTone} />
       </div>
+
+      <Section title="Décision admin" hint="Résumé lisible des signaux récents et du niveau d’attention recommandé.">
+        <div className="wk-panel" style={{ borderLeft: `4px solid ${decision.tone === "bad" ? "var(--bad)" : decision.tone === "warn" ? "var(--warn)" : decision.tone === "info" ? "var(--info)" : "var(--ok)"}` }}>
+          <p><strong>{decision.label}</strong></p>
+          <p>{decision.narrative}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {decision.signals.map((signal) => (
+              <Pill key={signal.code} tone={signal.tone}>{signal.title}</Pill>
+            ))}
+          </div>
+        </div>
+      </Section>
 
       <Section title="Profil utilisateur">
         <div className="wk-grid-2">
@@ -331,9 +262,7 @@ export default async function UserDetailPage({
                     <Td right>{formatUsd(currentValue)}</Td>
                     <Td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        <Pill tone={Number(row.netFlow || 0) >= 0 ? "ok" : "warn"}>
-                          {formatToken(Number(row.netFlow || 0))}
-                        </Pill>
+                        <Pill tone={Number(row.netFlow || 0) >= 0 ? "ok" : "warn"}>{formatToken(Number(row.netFlow || 0))}</Pill>
                         {row.rewards !== 0 && <Pill tone="info">Rewards {formatToken(Number(row.rewards || 0))}</Pill>}
                         {row.fees !== 0 && <Pill tone="warn">Fees {formatToken(Number(row.fees || 0))}</Pill>}
                       </div>
@@ -388,9 +317,7 @@ export default async function UserDetailPage({
                   <Td>{txTypeLabel(tx.type)}</Td>
                   <Td>{tx.asset_symbol}</Td>
                   <Td right>{formatToken(Number(tx.amount || 0))}</Td>
-                  <Td>
-                    <Pill tone={txStatusTone(tx.status)}>{txStatusLabel(tx.status)}</Pill>
-                  </Td>
+                  <Td><Pill tone={txStatusTone(tx.status)}>{txStatusLabel(tx.status)}</Pill></Td>
                   <Td>{formatDateTime(new Date(tx.created_at))}</Td>
                   <Td>{tx.tx_hash ? shortId(tx.tx_hash) : "—"}</Td>
                 </tr>
@@ -425,23 +352,11 @@ export default async function UserDetailPage({
   );
 }
 
-function StatCard({
-  label,
-  value,
-  sub,
-  tone = "ok",
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  tone?: "ok" | "warn" | "bad" | "info";
-}) {
+function StatCard({ label, value, sub, tone = "ok" }: { label: string; value: string; sub: string; tone?: "ok" | "warn" | "bad" | "info" }) {
   return (
     <div className="wk-strip-item">
       <div className="wk-strip-label">{label}</div>
-      <div className="wk-strip-value" style={{ color: tone === "bad" ? "var(--bad)" : tone === "warn" ? "var(--warn)" : "var(--fg)" }}>
-        {value}
-      </div>
+      <div className="wk-strip-value" style={{ color: tone === "bad" ? "var(--bad)" : tone === "warn" ? "var(--warn)" : "var(--fg)" }}>{value}</div>
       <div className="wk-strip-sub">{sub}</div>
     </div>
   );
