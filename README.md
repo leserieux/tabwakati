@@ -18,6 +18,15 @@ Le chargeur partagé `lib/assets.ts` fournit l'agrégation générique des solde
 
 Le dashboard d'administration doit évoluer au-delà de l'affichage des soldes et des transactions. Il doit permettre de comprendre les flux financiers, la performance, la valeur et le risque de chaque utilisateur, tout en conservant une lecture séparée par actif.
 
+### État d'avancement
+
+- [x] **Phase 1 — Socle analytique** : tables `user_performance_daily`, `user_risk_flags`, historique append-only des scores, vue `user_risk_scores_current`, RLS et versionnement du scoring/règles.
+- [x] **Phase 2A — Fiche utilisateur initiale** : profil, KYC, limites, valeur USD, dépôts, retraits, variation nette, performance par actif, transactions et alertes.
+- [x] **Phase 2B — Synthèse financière renforcée** : classification des rewards, fees, jeux, transferts, swaps et prêts ; calcul des valeurs USD par actif ; affichage du score et des flags de risque.
+- [ ] **Phase 2C — Qualité et décision** : raisons de score lisibles, alertes explicites, ratio dépôt/retrait, périodes 7/30/90 jours et filtres transactionnels complets.
+- [ ] **Phase 3 — Analyse plateforme** : cohortes, rétention, churn, LTV, revenu par utilisateur et monétisation.
+- [ ] **Phase 4 — Économie avancée** : coût historique d'acquisition, P&L réel et analyse multi-actifs avancée.
+
 ### Principes de calcul
 
 Pour chaque utilisateur et chaque actif, distinguer au minimum :
@@ -101,13 +110,6 @@ Prévoir des alertes configurables, notamment :
 - usage inhabituel d'adresses ;
 - écart de rapprochement ou opération impossible.
 
-### Priorités de livraison
-
-1. Performance par actif, variation nette, dépôts, retraits, soldes, catégories de flux et score de risque simple.
-2. KYC, comportement, historique, ratio dépôt/retrait et alertes automatiques.
-3. LTV, cohortes, revenu par utilisateur, churn, rétention et valorisation du portefeuille.
-4. Profit réel basé sur le coût moyen d'acquisition et P&L multi-actifs avancé.
-
 ### Règles de présentation
 
 - Ne jamais mélanger les quantités de plusieurs actifs.
@@ -116,3 +118,8 @@ Prévoir des alertes configurables, notamment :
 - Afficher la variation nette avant de parler de bénéfice estimé.
 - Ne pas appeler « profit réel » un résultat qui ne repose pas sur un coût d'acquisition historique.
 - Concevoir chaque écran pour répondre à trois questions : où va l'argent, qui crée de la valeur et qui présente un risque ?
+
+### Journal des évolutions
+
+- **2026-09-25 — Phase 2B** : la fiche utilisateur admin expose les KPI principaux, la performance par actif, la valeur USD, les transactions et les flags de risque. `lib/user-performance.ts` classe désormais les flux de rewards, fees, jeux, transferts, swaps et prêts, avec une valorisation USD par actif.
+- **2026-09-25 — Phase 2C suivante** : ajouter les raisons de score, les fenêtres 7/30/90 jours, le ratio dépôt/retrait et les filtres d'investigation avant de commencer les cohortes et la LTV.
