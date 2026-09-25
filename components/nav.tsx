@@ -24,5 +24,5 @@ const GROUPS = [
 
 export default function Nav() {
   const pathname = usePathname();
-  return <nav className="wk-nav" aria-label="Navigation principale">{GROUPS.map((group) => <div key={group.label} className="wk-navgroup"><div className="wk-navgroup-label">{group.label}</div>{group.items.map((item) => <a key={item.href} href={item.href} className={`wk-navitem ${pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`)) ? "active" : ""}`}><Icon name={item.icon} size={16} /><span>{item.label}</span></a>)}</div>)}</nav>;
+  return <nav className="wk-nav" aria-label="Navigation principale">{GROUPS.map((group) => <div key={group.label} className="wk-navgroup"><div className="wk-navgroup-label">{group.label}</div>{group.items.map((item) => <a key={item.href} href={item.href} className={`wk-navitem ${pathname === item.href ? "active" : ""}`}><Icon name={item.icon} size={16} /><span>{item.label}</span></a>)}</div>)}</nav>;
 }
