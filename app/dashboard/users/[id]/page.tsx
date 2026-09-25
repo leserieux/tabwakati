@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { loadUserPerformance } from "@/lib/user-performance";
+import { loadUserWindowSummaries } from "@/lib/user-analytics";
 import { formatCompactNumber, formatDateTime, formatNumber, formatToken, formatUsd, shortId } from "@/lib/format";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
@@ -97,6 +98,7 @@ export default async function UserDetailPage({
     riskScoreRes,
     riskFlags,
     performance,
+    windows,
   ] = await Promise.all([
     db
       .from("users")
@@ -154,6 +156,7 @@ export default async function UserDetailPage({
         .limit(10)
     ),
     loadUserPerformance(params.id),
+    loadUserWindowSummaries(params.id),
   ]);
 
   if (userRes.error || !userRes.data || userRes.data.length === 0) {
@@ -221,6 +224,7 @@ export default async function UserDetailPage({
     riskScoreRes.error,
     riskFlags.error,
     performance.error,
+    windows.error,
   ].filter(Boolean);
 
   return (
@@ -268,6 +272,24 @@ export default async function UserDetailPage({
             <p><strong>Limite retrait/mois :</strong> {limitRow?.monthly_withdraw_limit ?? "—"}</p>
             <p><strong>Raison de rejet :</strong> {kycRow?.rejection_reason || "—"}</p>
           </div>
+        </div>
+      </Section>
+
+      <Section title="Résumé comportemental" hint="Synthèse de décision sur 7 / 30 / 90 jours.">
+        <div className="wk-grid-3">
+          {windows.rows.map((window) => (
+            <div key={window.window} className="wk-panel">
+              <h3 style={{ marginTop: 0, marginBottom: 12 }}>{window.window === "7d" ? "7 jours" : window.window === "30d" ? "30 jours" : "90 jours"}</h3>
+              <p><strong>Dépôts :</strong> {formatToken(window.deposits)}</p>
+              <p><strong>Retraits :</strong> {formatToken(window.withdrawals)}</p>
+              <p><strong>Cashflow net :</strong> {formatToken(window.netCashflow)}</p>
+              <p><strong>Ratio dépôt/retrait :</strong> {window.ratio === null ? "—" : window.ratio.toFixed(2)}</p>
+              <p><strong>Transactions :</strong> {formatCompactNumber(window.transactionCount)}</p>
+              <p><strong>Succès / échec :</strong> {window.successfulCount} / {window.failedCount}</p>
+              <p><strong>Rewards :</strong> {formatToken(window.rewards)}</p>
+              <p><strong>Frais :</strong> {formatToken(window.fees)}</p>
+            </div>
+          ))}
         </div>
       </Section>
 
