@@ -23,8 +23,10 @@ Le dashboard d'administration doit évoluer au-delà de l'affichage des soldes e
 - [x] **Phase 1 — Socle analytique** : tables `user_performance_daily`, `user_risk_flags`, historique append-only des scores, vue `user_risk_scores_current`, RLS et versionnement du scoring/règles.
 - [x] **Phase 2A — Fiche utilisateur initiale** : profil, KYC, limites, valeur USD, dépôts, retraits, variation nette, performance par actif, transactions et alertes.
 - [x] **Phase 2B — Synthèse financière renforcée** : classification des rewards, fees, jeux, transferts, swaps et prêts ; calcul des valeurs USD par actif ; affichage du score et des flags de risque.
-- [ ] **Phase 2C — Qualité et décision** : raisons de score lisibles, alertes explicites, ratio dépôt/retrait, périodes 7/30/90 jours et filtres transactionnels complets.
-- [ ] **Phase 3 — Analyse plateforme** : cohortes, rétention, churn, LTV, revenu par utilisateur et monétisation.
+- [x] **Phase 2C — Qualité et décision** : signaux explicables, résumé narratif admin, ratio dépôt/retrait et fenêtres 7/30/90 jours.
+- [ ] **Phase 2D — Investigation avancée** : raisons détaillées du scoring persistant, filtres transactionnels complets et traçabilité directe des transactions sources.
+- [x] **Phase 3A — Fondation cohortes** : agrégats par mois de création, déposants, cashflow net, frais et rétention à 90 jours dans `lib/platform-analytics.ts`.
+- [ ] **Phase 3B — Analyse plateforme** : écran cohortes, churn, LTV, revenu par utilisateur et monétisation.
 - [ ] **Phase 4 — Économie avancée** : coût historique d'acquisition, P&L réel et analyse multi-actifs avancée.
 
 ### Principes de calcul
@@ -38,34 +40,11 @@ Pour chaque utilisateur et chaque actif, distinguer au minimum :
 
 La variation nette est une mesure de flux comptable. Elle ne doit pas être présentée comme un bénéfice réel tant que le coût historique d'acquisition de chaque actif n'est pas connu.
 
-Il faut distinguer :
-
-- **Performance comptable / flux** : calculée à partir de `transactions` et `user_balances`.
-- **Performance économique / profit réel** : nécessite le prix d'achat moyen, les dates d'acquisition, les entrées et sorties d'actifs ainsi que la valorisation actuelle.
-
-Les résultats doivent toujours préciser s'il s'agit d'une variation nette, d'un cashflow ou d'une estimation de bénéfice.
-
-### Catégories de flux à classifier
-
-Le moteur de synthèse doit progressivement classifier les transactions dans les catégories suivantes :
-
-- `deposit`, `withdrawal`, `transfer_in`, `transfer_out`
-- `game_win`, `game_bet`, `fee`, `refund`, `reward`, `staking_reward`
-- `staking_lock`, `unstake`, `swap_in`, `swap_out`
-- `loan_borrowed`, `loan_repaid`, `cashback`, `referral_bonus`
-- `admin_adjustment`, `balance_correction`, `bonus`
-
-À partir de cette classification, calculer séparément les entrées, sorties, gains, pertes, transferts, frais et flux propres à chaque fonctionnalité.
-
 ### Architecture analytique cible
-
-Conserver trois couches :
 
 1. **Couche brute** : `transactions`, `user_balances`, `user_addresses`, `user_kyc`, `user_stakes`, `loans`, `asset_prices`.
 2. **Couche analytique** : `user_performance_daily`, `user_activity_summary`, `user_risk_flags`, `user_lifetime_value`, `user_performance_snapshot`.
 3. **Couche dashboard** : vue globale, fiche utilisateur, risques, performance, monétisation et alertes.
-
-Les vues analytiques devront couvrir les périodes 7, 30 et 90 jours, la fréquence des dépôts, le churn, le risque, la profitabilité, le cash net et la valeur générée par les frais, le staking, les jeux, les swaps et les prêts.
 
 ### Sections cibles du dashboard
 
@@ -80,35 +59,18 @@ Les vues analytiques devront couvrir les périodes 7, 30 et 90 jours, la fréque
 Afficher l'identité, le KYC, le statut, le score de risque, la valeur actuelle, la dernière activité et :
 
 - solde actuel, dépôts, retraits, variation nette et valeur USD ;
-- performance détaillée par actif : dépôts, retraits, solde, variation, prix, valeur USD et statut ;
-- mouvements par catégorie : gains, pertes, transferts, frais, récompenses, swaps et bonus ;
-- historique des transactions avec filtres actif, statut et type, ainsi qu'un export CSV ;
-- adresses, staking, prêts, jeux, swaps et alertes d'investigation.
+- performance détaillée par actif ;
+- mouvements par catégorie ;
+- historique des transactions avec filtres et export CSV ;
+- alertes d'investigation.
 
-#### Performance globale
+#### Performance globale et monétisation
 
-Suivre les volumes de dépôts et retraits, les revenus, les frais, le staking, les actifs les plus utilisés, les comptes rentables ou en perte et les ratios KYC / risque.
-
-#### Risque
-
-Identifier les dépôts suivis de retraits rapides, les gros retraits sans activité récente, les KYC incomplets, les volumes anormaux, les opérations échouées, les adresses inhabituelles et les comportements potentiellement frauduleux ou abusifs.
-
-#### Monétisation
-
-Mesurer les revenus par source, la LTV par cohorte, la rétention à 7/30/90 jours et la valeur client par segment.
+Suivre les volumes de dépôts et retraits, les revenus, les frais, la rétention à 7/30/90 jours, la LTV, les cohortes, les actifs utilisés et la valeur client par segment.
 
 ### Score de risque et alertes
 
-Introduire progressivement un score de risque de 0 à 100 avec les statuts `ok`, `watch`, `risky` et `blocked`. Les facteurs peuvent inclure le KYC, la vitesse de retrait, les montants anormaux, les pays, le nombre d'adresses, les échecs répétés et les anomalies de comportement.
-
-Prévoir des alertes configurables, notamment :
-
-- dépôt important suivi d'un retrait important dans les 24 heures ;
-- retrait sans KYC complet ;
-- volume ou fréquence inhabituels ;
-- opérations incohérentes entre plusieurs comptes ;
-- usage inhabituel d'adresses ;
-- écart de rapprochement ou opération impossible.
+Le score de risque de 0 à 100 et les flags doivent rester explicables, versionnés et séparés des affirmations de fraude. Les alertes doivent identifier les dépôts suivis de retraits rapides, les KYC incomplets, les volumes anormaux, les échecs répétés et les comportements inhabituels.
 
 ### Règles de présentation
 
@@ -121,5 +83,7 @@ Prévoir des alertes configurables, notamment :
 
 ### Journal des évolutions
 
-- **2026-09-25 — Phase 2B** : la fiche utilisateur admin expose les KPI principaux, la performance par actif, la valeur USD, les transactions et les flags de risque. `lib/user-performance.ts` classe désormais les flux de rewards, fees, jeux, transferts, swaps et prêts, avec une valorisation USD par actif.
-- **2026-09-25 — Phase 2C suivante** : ajouter les raisons de score, les fenêtres 7/30/90 jours, le ratio dépôt/retrait et les filtres d'investigation avant de commencer les cohortes et la LTV.
+- **2026-09-25 — Phase 2B** : KPI principaux, performance par actif, valeur USD, transactions et flags de risque.
+- **2026-09-25 — Phase 2C** : résumés 7/30/90 jours, ratio dépôt/retrait et couche de décision narrative admin.
+- **2026-09-25 — Phase 3A** : ajout de `lib/platform-analytics.ts` pour préparer cohortes, rétention, cashflow, dépôts, retraits et frais par mois de création.
+- **Prochaine étape** : connecter les cohortes à une page dashboard dédiée, puis ajouter churn/LTV avec des hypothèses explicitement documentées.
