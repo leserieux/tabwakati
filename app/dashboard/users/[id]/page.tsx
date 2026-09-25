@@ -1,39 +1,426 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { loadUserPerformance } from "@/lib/user-performance";
-import { formatDateTime, formatNumber, formatUsd, shortId } from "@/lib/format";
+import { formatCompactNumber, formatDateTime, formatNumber, formatToken, formatUsd, shortId } from "@/lib/format";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type User = { id: string; username: string; email: string | null; phone: string | null; country_code: string | null; is_verified: boolean; email_confirmed: boolean; profile_completed: boolean; user_level: number; experience_points: number; created_at: string | null; updated_at: string | null };
-type Balance = { asset_symbol: string; available_balance: number; staking_balance: number; pending_balance: number; total_deposited: number; total_withdrawn: number; total_earned_staking: number };
-type Tx = { id: string; type: string; asset_symbol: string; amount: number; fee: number | null; status: string | null; created_at: string; tx_hash: string | null };
-type Kyc = { verification_level: string; verification_status: string; verified_at: string | null; expiry_date: string | null; rejection_reason: string | null };
-type Limits = { daily_withdraw_limit: number; daily_withdraw_used: number; daily_deposit_limit: number; daily_deposit_used: number; monthly_withdraw_limit: number; monthly_withdraw_used: number };
+type User = {
+  id: string;
+  username: string;
+  email: string | null;
+  phone: string | null;
+  country_code: string | null;
+  is_verified: boolean;
+  email_confirmed: boolean;
+  profile_completed: boolean;
+  user_level: string | null;
+  experience_points: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
 
-export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams: { asset?: string } }) {
-  const db = getSupabaseAdmin(); const selectedAsset = (searchParams.asset || "").trim();
-  const [userRes, balances, transactions, prices, kyc, limits, addresses, stakes, loans, performance] = await Promise.all([
-    db.from("users").select("id, username, email, phone, country_code, is_verified, email_confirmed, profile_completed, user_level, experience_points, created_at, updated_at").eq("id", params.id).maybeSingle(),
-    q<Balance>(db.from("user_balances").select("asset_symbol, available_balance, staking_balance, pending_balance, total_deposited, total_withdrawn, total_earned_staking").eq("user_id", params.id).order("asset_symbol")),
-    q<Tx>(db.from("transactions").select("id, type, asset_symbol, amount, fee, status, created_at, tx_hash").eq("user_id", params.id).order("created_at", { ascending: false }).limit(100)),
+type Balance = {
+  asset_symbol: string;
+  available_balance: number;
+  staking_balance: number;
+  pending_balance: number;
+  total_deposited: number;
+  total_withdrawn: number;
+  total_earned_staking: number;
+};
+
+type Tx = {
+  id: string;
+  type: string;
+  asset_symbol: string;
+  amount: number;
+  fee: number | null;
+  status: string | null;
+  created_at: string;
+  tx_hash: string | null;
+};
+
+type Kyc = {
+  verification_level: string | null;
+  verification_status: string | null;
+  verified_at: string | null;
+  expiry_date: string | null;
+  rejection_reason: string | null;
+};
+
+type Limits = {
+  daily_withdraw_limit: number | null;
+  daily_withdraw_used: number | null;
+  daily_deposit_limit: number | null;
+  daily_deposit_used: number | null;
+  monthly_withdraw_limit: number | null;
+  monthly_withdraw_used: number | null;
+};
+
+type RiskScoreRow = {
+  score: number | null;
+  level: string | null;
+  reasons: any[] | null;
+  calculated_at: string | null;
+};
+
+type RiskFlagRow = {
+  title: string;
+  description: string;
+  severity: string | null;
+  status: string | null;
+  asset_symbol: string | null;
+  score_impact: number | null;
+  detected_at: string | null;
+};
+
+export default async function UserDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams?: { asset?: string };
+}) {
+  const db = getSupabaseAdmin();
+  const selectedAsset = (searchParams?.asset || "").trim();
+
+  const [
+    userRes,
+    balances,
+    transactions,
+    prices,
+    kyc,
+    limits,
+    riskScoreRes,
+    riskFlags,
+    performance,
+  ] = await Promise.all([
+    db
+      .from("users")
+      .select(
+        "id, username, email, phone, country_code, is_verified, email_confirmed, profile_completed, user_level, experience_points, created_at, updated_at"
+      )
+      .eq("id", params.id)
+      .limit(1),
+    q<Balance>(
+      db
+        .from("user_balances")
+        .select(
+          "asset_symbol, available_balance, staking_balance, pending_balance, total_deposited, total_withdrawn, total_earned_staking"
+        )
+        .eq("user_id", params.id)
+    ),
+    q<Tx>(
+      db
+        .from("transactions")
+        .select("id, type, asset_symbol, amount, fee, status, created_at, tx_hash")
+        .eq("user_id", params.id)
+        .order("created_at", { ascending: false })
+        .limit(100)
+    ),
     loadPrices(),
-    q<Kyc>(db.from("user_kyc").select("verification_level, verification_status, verified_at, expiry_date, rejection_reason").eq("user_id", params.id).limit(1)),
-    q<Limits>(db.from("user_transaction_limits").select("daily_withdraw_limit, daily_withdraw_used, daily_deposit_limit, daily_deposit_used, monthly_withdraw_limit, monthly_withdraw_used").eq("user_id", params.id).limit(1)),
-    q<any>(db.from("user_addresses").select("asset_symbol, network, address, is_active, cached_balance, last_balance_check").eq("user_id", params.id).eq("is_active", true).order("asset_symbol")),
-    q<any>(db.from("user_stakes").select("id, pool_id, amount, status, pending_rewards, rewards_earned, staked_at, unlock_at").eq("user_id", params.id).order("created_at", { ascending: false }).limit(50)),
-    q<any>(db.from("loans").select("id, collateral_asset, collateral_amount, borrow_asset, principal_amount, accrued_interest, status, opened_at, closed_at").eq("user_id", params.id).limit(50)),
-    loadUserPerformance(params.id)
+    q<Kyc>(
+      db
+        .from("user_kyc")
+        .select("verification_level, verification_status, verified_at, expiry_date, rejection_reason")
+        .eq("user_id", params.id)
+        .limit(1)
+    ),
+    q<Limits>(
+      db
+        .from("user_transaction_limits")
+        .select(
+          "daily_withdraw_limit, daily_withdraw_used, daily_deposit_limit, daily_deposit_used, monthly_withdraw_limit, monthly_withdraw_used"
+        )
+        .eq("user_id", params.id)
+        .limit(1)
+    ),
+    q<RiskScoreRow>(
+      db
+        .from("user_risk_scores_current")
+        .select("score, level, reasons, calculated_at")
+        .eq("user_id", params.id)
+        .limit(1)
+    ),
+    q<RiskFlagRow>(
+      db
+        .from("user_risk_flags")
+        .select("title, description, severity, status, asset_symbol, score_impact, detected_at")
+        .eq("user_id", params.id)
+        .order("detected_at", { ascending: false })
+        .limit(10)
+    ),
+    loadUserPerformance(params.id),
   ]);
-  if (userRes.error || !userRes.data) return <div><PageHeader title="Utilisateur introuvable" /><ErrorNote text={userRes.error?.message || "Ce compte n'existe pas ou n'est plus disponible."} /><p><a className="wk-link" href="/dashboard/users">← Retour aux utilisateurs</a></p></div>;
-  const user = userRes.data as User;
+
+  if (userRes.error || !userRes.data || userRes.data.length === 0) {
+    return (
+      <div>
+        <PageHeader title="Utilisateur introuvable" />
+        <ErrorNote text={userRes.error?.message || "Ce compte n'existe pas ou n'est plus disponible."} />
+      </div>
+    );
+  }
+
+  const user = userRes.data[0] as User;
   const byAsset = new Map<string, Balance>();
-  for (const row of balances.rows) { const current = byAsset.get(row.asset_symbol) || { asset_symbol: row.asset_symbol, available_balance: 0, staking_balance: 0, pending_balance: 0, total_deposited: 0, total_withdrawn: 0, total_earned_staking: 0 }; current.available_balance += Number(row.available_balance || 0); current.staking_balance += Number(row.staking_balance || 0); current.pending_balance += Number(row.pending_balance || 0); current.total_deposited += Number(row.total_deposited || 0); current.total_withdrawn += Number(row.total_withdrawn || 0); current.total_earned_staking += Number(row.total_earned_staking || 0); byAsset.set(row.asset_symbol, current); }
-  const visibleTx = selectedAsset ? transactions.rows.filter((row) => row.asset_symbol === selectedAsset) : transactions.rows;
-  const totalUsd = [...byAsset.values()].reduce((sum, row) => { const total = row.available_balance + row.staking_balance + row.pending_balance; return sum + total * (prices.get(row.asset_symbol) || 0); }, 0);
-  const kycRow = kyc.rows[0]; const limitRow = limits.rows[0]; const exportHref = `/api/users/${params.id}/transactions/export${selectedAsset ? `?asset=${encodeURIComponent(selectedAsset)}` : ""}`; const hrefAsset = (asset?: string) => asset ? `/dashboard/users/${params.id}?asset=${encodeURIComponent(asset)}` : `/dashboard/users/${params.id}`;
-  return <div><PageHeader title={user.username} subtitle={`Compte ${shortId(user.id)} · profil, risques et performance`} updatedAt={formatDateTime(new Date())} /><p><a className="wk-link" href="/dashboard/users">← Retour aux utilisateurs</a></p><ErrorNote text={[balances.error, transactions.error, kyc.error, limits.error, addresses.error, stakes.error, loans.error, performance.error].filter(Boolean).join(" · ") || null} /><div className="wk-panel"><div className="wk-asset">{user.email || "Email non renseigné"}</div><div className="wk-asset-sub">{user.phone || "Téléphone non renseigné"} · {user.country_code || "Pays inconnu"} · ID {user.id}</div><div className="wk-asset-sub">Créé le : {user.created_at ? formatDateTime(new Date(user.created_at)) : "—"} · Mis à jour : {user.updated_at ? formatDateTime(new Date(user.updated_at)) : "—"}</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>{user.email_confirmed && <Pill tone="ok">Email confirmé</Pill>}{user.profile_completed && <Pill tone="info">Profil complété</Pill>}{user.is_verified && <Pill tone="ok">Vérifié</Pill>}<Pill tone="info">Niveau {user.user_level}</Pill></div></div><div className="wk-strip"><StatCard label="Valeur valorisée" value={formatUsd(totalUsd)} sub="Prix disponibles uniquement" /><StatCard label="Actifs détenus" value={String(byAsset.size)} sub="Toutes devises confondues" /><StatCard label="Transactions" value={String(visibleTx.length)} sub={selectedAsset || "Dernières 100"} /><StatCard label="KYC" value={kycRow?.verification_status || "non configuré"} sub={kycRow?.verification_level || "—"} /></div><Section title="Performance financière" hint="Calcul par actif : solde actuel + retraits − dépôts. Ce n'est pas nécessairement un bénéfice économique (les transferts et bonus sont détaillés ci-dessous)."><TableWrap><thead><tr><Th>Actif</Th><Th right>Dépôts</Th><Th right>Retraits</Th><Th right>Solde actuel</Th><Th right>Variation nette</Th><Th right>Valeur variation</Th></tr></thead><tbody>{performance.rows.length === 0 ? <tr><Td colSpan={6}>Aucune donnée de performance.</Td></tr> : performance.rows.map((row) => <tr key={row.asset}><Td><span className="wk-asset">{row.asset}</span></Td><Td right>{formatNumber(row.deposited)} <span className="wk-asset-sub">({row.depositsCount})</span></Td><Td right>{formatNumber(row.withdrawn)} <span className="wk-asset-sub">({row.withdrawalsCount})</span></Td><Td right>{formatNumber(row.current)}</Td><Td right><span className={row.variation >= 0 ? "wk-pos" : "wk-neg"}>{row.variation >= 0 ? "+" : ""}{formatNumber(row.variation)}</span></Td><Td right>{row.variationUsd === null ? "—" : formatUsd(row.variationUsd)}</Td></tr>)}</tbody></TableWrap><div className="wk-callout wk-callout-info" style={{ marginTop: 12 }}>La variation nette compare les flux comptabilisés au solde actuel. Pour mesurer un profit réel, il faut aussi tenir compte du prix d'achat, des swaps, des transferts reçus/envoyés et des récompenses.</div></Section><Section title="KYC et limites"><div className="wk-grid-2"><div className="wk-panel"><div className="wk-kv"><div className="wk-kv-row"><span>Statut KYC</span><strong>{kycRow?.verification_status || "—"}</strong></div><div className="wk-kv-row"><span>Niveau</span><span>{kycRow?.verification_level || "—"}</span></div><div className="wk-kv-row"><span>Expiration</span><span>{kycRow?.expiry_date ? formatDateTime(new Date(kycRow.expiry_date)) : "—"}</span></div>{kycRow?.rejection_reason && <div className="wk-kv-row"><span>Motif</span><span>{kycRow.rejection_reason}</span></div>}</div></div><div className="wk-panel"><div className="wk-kv">{limitRow ? <><div className="wk-kv-row"><span>Retraits jour</span><span>{formatNumber(limitRow.daily_withdraw_used)} / {formatNumber(limitRow.daily_withdraw_limit)}</span></div><div className="wk-kv-row"><span>Dépôts jour</span><span>{formatNumber(limitRow.daily_deposit_used)} / {formatNumber(limitRow.daily_deposit_limit)}</span></div><div className="wk-kv-row"><span>Retraits mois</span><span>{formatNumber(limitRow.monthly_withdraw_used)} / {formatNumber(limitRow.monthly_withdraw_limit)}</span></div></> : <div className="wk-asset-sub">Aucune limite configurée.</div>}</div></div></div></Section><Section title="Soldes par actif" hint="Les quantités restent séparées par actif.">{byAsset.size === 0 ? <Empty text="Aucun solde." /> : <TableWrap><thead><tr><Th>Actif</Th><Th right>Disponible</Th><Th right>Staking</Th><Th right>En attente</Th><Th right>Total</Th><Th right>Valeur USD</Th><Th right hideSm>Flux cumulés</Th></tr></thead><tbody>{[...byAsset.values()].map((row) => { const total = row.available_balance + row.staking_balance + row.pending_balance; return <tr key={row.asset_symbol}><Td><a className="wk-link" href={hrefAsset(row.asset_symbol)}>{row.asset_symbol}</a></Td><Td right>{formatNumber(row.available_balance)}</Td><Td right>{formatNumber(row.staking_balance)}</Td><Td right>{formatNumber(row.pending_balance)}</Td><Td right>{formatNumber(total)}</Td><Td right>{prices.get(row.asset_symbol) ? formatUsd(total * prices.get(row.asset_symbol)!) : "—"}</Td><Td right hideSm>+{formatNumber(row.total_deposited)} / −{formatNumber(row.total_withdrawn)}</Td></tr>; })}</tbody></TableWrap>}</Section><Section title="Adresses actives"><TableWrap><thead><tr><Th>Actif</Th><Th>Réseau</Th><Th>Adresse</Th><Th right>Solde cache</Th><Th>Dernière vérification</Th></tr></thead><tbody>{addresses.rows.length === 0 ? <tr><Td colSpan={5}>Aucune adresse active.</Td></tr> : addresses.rows.map((row) => <tr key={`${row.asset_symbol}-${row.network}-${row.address}`}><Td>{row.asset_symbol}</Td><Td>{row.network}</Td><Td><span className="wk-asset-sub">{row.address}</span></Td><Td right>{formatNumber(Number(row.cached_balance || 0))}</Td><Td>{row.last_balance_check ? formatDateTime(new Date(row.last_balance_check)) : "—"}</Td></tr>)}</tbody></TableWrap></Section><Section title="Staking et prêts"><div className="wk-grid-2"><div className="wk-panel"><h3 className="wk-h2">Positions de staking</h3>{stakes.rows.length === 0 ? <Empty text="Aucune position." /> : stakes.rows.map((row) => <div className="wk-kv-row" key={row.id}><span>{formatNumber(Number(row.amount))} · {row.status}</span><span>{formatNumber(Number(row.pending_rewards || 0))} récompenses en attente</span></div>)}</div><div className="wk-panel"><h3 className="wk-h2">Prêts</h3>{loans.rows.length === 0 ? <Empty text="Aucun prêt." /> : loans.rows.map((row) => <div className="wk-kv-row" key={row.id}><span>{row.borrow_asset} · {row.status}</span><span>{formatNumber(Number(row.principal_amount))} + {formatNumber(Number(row.accrued_interest || 0))}</span></div>)}</div></div></Section><Section title="Transactions récentes" hint={`${visibleTx.length} opération(s) affichée(s)`}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>{selectedAsset ? <a className="wk-link" href={hrefAsset()}>Tous les actifs</a> : <span />}{<a className="wk-link" href={exportHref}>Exporter en CSV</a>}</div>{visibleTx.length === 0 ? <Empty text="Aucune transaction pour ce filtre." /> : <TableWrap><thead><tr><Th>Date</Th><Th>Type</Th><Th>Actif</Th><Th right>Montant</Th><Th>Statut</Th><Th hideSm>Référence</Th></tr></thead><tbody>{visibleTx.map((row) => <tr key={row.id}><Td>{formatDateTime(new Date(row.created_at))}</Td><Td>{txTypeLabel(row.type)}</Td><Td>{row.asset_symbol}</Td><Td right>{formatNumber(Number(row.amount))}{row.fee ? <div className="wk-asset-sub">Frais : {formatNumber(Number(row.fee))}</div> : null}</Td><Td><Pill tone={txStatusTone(row.status)}>{txStatusLabel(row.status)}</Pill></Td><Td hideSm><span className="wk-asset-sub">{shortId(row.tx_hash || row.id)}</span></Td></tr>)}</tbody></TableWrap>}</Section></div>;
+  for (const row of balances.rows) {
+    const asset = String(row.asset_symbol);
+    const existing = byAsset.get(asset) || {
+      asset_symbol: asset,
+      available_balance: 0,
+      staking_balance: 0,
+      pending_balance: 0,
+      total_deposited: 0,
+      total_withdrawn: 0,
+      total_earned_staking: 0,
+    };
+    existing.available_balance += Number(row.available_balance || 0);
+    existing.staking_balance += Number(row.staking_balance || 0);
+    existing.pending_balance += Number(row.pending_balance || 0);
+    existing.total_deposited += Number(row.total_deposited || 0);
+    existing.total_withdrawn += Number(row.total_withdrawn || 0);
+    existing.total_earned_staking += Number(row.total_earned_staking || 0);
+    byAsset.set(asset, existing);
+  }
+
+  const totalUsd = [...byAsset.values()].reduce((sum, row) => {
+    const current = Number(row.available_balance || 0) + Number(row.staking_balance || 0) + Number(row.pending_balance || 0);
+    return sum + current * (prices.get(row.asset_symbol) || 0);
+  }, 0);
+
+  const riskScore = riskScoreRes.rows[0] || null;
+  const riskLevel = (riskScore?.level || "normal").toLowerCase();
+  const riskTone = riskLevel === "critical" ? "bad" : riskLevel === "high" ? "warn" : riskLevel === "watch" ? "warn" : "ok";
+
+  const totalDeposits = performance.rows.reduce((sum, row) => sum + Number(row.deposited || 0), 0);
+  const totalWithdrawn = performance.rows.reduce((sum, row) => sum + Number(row.withdrawn || 0), 0);
+  const totalNetVariation = performance.rows.reduce((sum, row) => sum + Number(row.variation || 0), 0);
+  const totalRewards = performance.rows.reduce((sum, row) => sum + Number(row.rewards || 0), 0);
+  const totalFees = performance.rows.reduce((sum, row) => sum + Number(row.fees || 0), 0);
+
+  const visibleTx = selectedAsset
+    ? transactions.rows.filter((row) => row.asset_symbol === selectedAsset)
+    : transactions.rows;
+
+  const performanceRows = selectedAsset
+    ? performance.rows.filter((row) => row.asset === selectedAsset)
+    : performance.rows;
+
+  const kycRow = kyc.rows[0] || null;
+  const limitRow = limits.rows[0] || null;
+
+  const queryErrors = [
+    balances.error,
+    transactions.error,
+    kyc.error,
+    limits.error,
+    riskScoreRes.error,
+    riskFlags.error,
+    performance.error,
+  ].filter(Boolean);
+
+  return (
+    <div>
+      <PageHeader
+        title={user.username || "Utilisateur"}
+        subtitle={`Compte ${shortId(user.id)} · profil, risque, actifs et performance`}
+        updatedAt={formatDateTime(new Date())}
+      />
+      <ErrorNote text={queryErrors.length ? `Certaines données sont indisponibles : ${queryErrors.join(" · ")}` : null} />
+
+      <div className="wk-strip" style={{ marginBottom: 18 }}>
+        <StatCard label="Valeur totale" value={formatUsd(totalUsd)} sub="USD" />
+        <StatCard label="Dépôts" value={formatToken(totalDeposits)} sub="Total enregistré" />
+        <StatCard label="Retraits" value={formatToken(totalWithdrawn)} sub="Total sorti" />
+        <StatCard label="Variation nette" value={formatToken(totalNetVariation)} sub="Flux + solde" />
+        <StatCard label="Risque" value={riskScore ? `${riskScore.score ?? 0}/100` : "—"} sub={riskScore?.level || "normal"} tone={riskTone} />
+      </div>
+
+      <Section title="Profil utilisateur">
+        <div className="wk-grid-2">
+          <div className="wk-panel">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              <Pill tone={user.is_verified ? "ok" : "warn"}>{user.is_verified ? "Vérifié" : "Non vérifié"}</Pill>
+              <Pill tone={user.email_confirmed ? "ok" : "info"}>{user.email_confirmed ? "Email validé" : "Email non validé"}</Pill>
+              <Pill tone={user.profile_completed ? "ok" : "warn"}>{user.profile_completed ? "Profil complet" : "Profil incomplet"}</Pill>
+            </div>
+            <p><strong>Email :</strong> {user.email || "—"}</p>
+            <p><strong>Téléphone :</strong> {user.phone || "—"}</p>
+            <p><strong>Pays :</strong> {user.country_code || "—"}</p>
+            <p><strong>Niveau :</strong> {user.user_level || "—"}</p>
+            <p><strong>Points :</strong> {formatCompactNumber(Number(user.experience_points || 0))}</p>
+            <p><strong>Créé le :</strong> {user.created_at ? formatDateTime(new Date(user.created_at)) : "—"}</p>
+            <p><strong>Dernière activité :</strong> {user.updated_at ? formatDateTime(new Date(user.updated_at)) : "—"}</p>
+          </div>
+
+          <div className="wk-panel">
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>KYC & limites</h3>
+            <p><strong>Statut KYC :</strong> {kycRow?.verification_status || "—"}</p>
+            <p><strong>Niveau :</strong> {kycRow?.verification_level || "—"}</p>
+            <p><strong>Vérifié le :</strong> {kycRow?.verified_at ? formatDateTime(new Date(kycRow.verified_at)) : "—"}</p>
+            <p><strong>Expiration :</strong> {kycRow?.expiry_date ? formatDateTime(new Date(kycRow.expiry_date)) : "—"}</p>
+            <p><strong>Limite dépôt/jour :</strong> {limitRow?.daily_deposit_limit ?? "—"}</p>
+            <p><strong>Limite retrait/jour :</strong> {limitRow?.daily_withdraw_limit ?? "—"}</p>
+            <p><strong>Limite retrait/mois :</strong> {limitRow?.monthly_withdraw_limit ?? "—"}</p>
+            <p><strong>Raison de rejet :</strong> {kycRow?.rejection_reason || "—"}</p>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Performance par actif" hint={selectedAsset ? `Filtre actif : ${selectedAsset}` : "Chaque actif est calculé séparément, sans mélange de quantités."}>
+        {performanceRows.length === 0 ? (
+          <Empty text="Aucun actif pour cet utilisateur." />
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Actif</Th>
+                <Th right>Dépôts</Th>
+                <Th right>Retraits</Th>
+                <Th right>Solde</Th>
+                <Th right>Variation</Th>
+                <Th right>Valeur</Th>
+                <Th>Flux</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {performanceRows.map((row) => {
+                const currentValue = Number(row.current || 0) * (prices.get(row.asset) || 0);
+                const assetTone = Number(row.variation || 0) >= 0 ? "ok" : "warn";
+                return (
+                  <tr key={row.asset}>
+                    <Td>
+                      <a className="wk-link" href={`/dashboard/users/${params.id}?asset=${encodeURIComponent(row.asset)}`}>
+                        {row.asset}
+                      </a>
+                    </Td>
+                    <Td right>{formatToken(Number(row.deposited || 0))}</Td>
+                    <Td right>{formatToken(Number(row.withdrawn || 0))}</Td>
+                    <Td right>{formatToken(Number(row.current || 0))}</Td>
+                    <Td right>
+                      <span style={{ color: assetTone === "ok" ? "var(--ok)" : "var(--warn)" }}>
+                        {formatToken(Number(row.variation || 0))}
+                      </span>
+                    </Td>
+                    <Td right>{formatUsd(currentValue)}</Td>
+                    <Td>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        <Pill tone={Number(row.netFlow || 0) >= 0 ? "ok" : "warn"}>
+                          {formatToken(Number(row.netFlow || 0))}
+                        </Pill>
+                        {row.rewards !== 0 && <Pill tone="info">Rewards {formatToken(Number(row.rewards || 0))}</Pill>}
+                        {row.fees !== 0 && <Pill tone="warn">Fees {formatToken(Number(row.fees || 0))}</Pill>}
+                      </div>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </TableWrap>
+        )}
+      </Section>
+
+      <Section title="Synthèse de flux" hint="Agrégat des entrées, sorties, rewards et frais par utilisateur.">
+        <div className="wk-grid-2">
+          <div className="wk-panel">
+            <p><strong>Dépot total :</strong> {formatToken(totalDeposits)}</p>
+            <p><strong>Retrait total :</strong> {formatToken(totalWithdrawn)}</p>
+            <p><strong>Variation nette :</strong> {formatToken(totalNetVariation)}</p>
+            <p><strong>Rewards / cashback / bonus :</strong> {formatToken(totalRewards)}</p>
+            <p><strong>Frais :</strong> {formatToken(totalFees)}</p>
+            <p><strong>Valeur totale USD :</strong> {formatUsd(totalUsd)}</p>
+          </div>
+          <div className="wk-panel">
+            <p><strong>Transactions :</strong> {formatCompactNumber(transactions.rows.length)}</p>
+            <p><strong>Actif filtré :</strong> {selectedAsset || "Tous"}</p>
+            <p><strong>Vérification KYC :</strong> {kycRow ? kycRow.verification_status || "—" : "—"}</p>
+            <p><strong>Score risque :</strong> {riskScore ? `${riskScore.score ?? 0}/100` : "Non calculé"}</p>
+            <p><strong>Niveau :</strong> {riskScore?.level || "normal"}</p>
+            <p><strong>Dernière analyse :</strong> {riskScore?.calculated_at ? formatDateTime(new Date(riskScore.calculated_at)) : "—"}</p>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Transactions récentes" hint={selectedAsset ? `Affichage limité à ${selectedAsset}` : "Dernières transactions de l'utilisateur."}>
+        {visibleTx.length === 0 ? (
+          <Empty text="Aucune transaction pour ce filtre." />
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Type</Th>
+                <Th>Actif</Th>
+                <Th right>Montant</Th>
+                <Th>Statut</Th>
+                <Th>Date</Th>
+                <Th>Tx</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleTx.map((tx) => (
+                <tr key={tx.id}>
+                  <Td>{txTypeLabel(tx.type)}</Td>
+                  <Td>{tx.asset_symbol}</Td>
+                  <Td right>{formatToken(Number(tx.amount || 0))}</Td>
+                  <Td>
+                    <Pill tone={txStatusTone(tx.status)}>{txStatusLabel(tx.status)}</Pill>
+                  </Td>
+                  <Td>{formatDateTime(new Date(tx.created_at))}</Td>
+                  <Td>{tx.tx_hash ? shortId(tx.tx_hash) : "—"}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        )}
+      </Section>
+
+      <Section title="Risque & alertes" hint="Signal de risque depuis le score et les flags analytiques.">
+        {riskFlags.rows.length === 0 ? (
+          <Empty text="Aucune alerte de risque détectée pour ce compte." />
+        ) : (
+          <div className="wk-grid-2">
+            {riskFlags.rows.map((flag, index) => (
+              <div key={`${flag.title}-${index}`} className="wk-panel">
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                  <strong>{flag.title}</strong>
+                  <Pill tone={flag.severity === "critical" || flag.severity === "high" ? "bad" : flag.severity === "medium" ? "warn" : "info"}>{flag.severity || "info"}</Pill>
+                </div>
+                <p>{flag.description}</p>
+                <p><strong>Actif :</strong> {flag.asset_symbol || "—"}</p>
+                <p><strong>Impact score :</strong> {flag.score_impact ?? 0}</p>
+                <p><strong>Détecté :</strong> {flag.detected_at ? formatDateTime(new Date(flag.detected_at)) : "—"}</p>
+                <p><strong>Statut :</strong> {flag.status || "open"}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
 }
-function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) { return <div className="wk-strip-item"><div className="wk-strip-label">{label}</div><div className="wk-strip-value">{value}</div><div className="wk-strip-sub">{sub}</div></div>; }
+
+function StatCard({
+  label,
+  value,
+  sub,
+  tone = "ok",
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "ok" | "warn" | "bad" | "info";
+}) {
+  return (
+    <div className="wk-strip-item">
+      <div className="wk-strip-label">{label}</div>
+      <div className="wk-strip-value" style={{ color: tone === "bad" ? "var(--bad)" : tone === "warn" ? "var(--warn)" : "var(--fg)" }}>
+        {value}
+      </div>
+      <div className="wk-strip-sub">{sub}</div>
+    </div>
+  );
+}
