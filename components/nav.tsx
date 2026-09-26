@@ -11,6 +11,7 @@ const GROUPS = [
     { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
     { href: "/dashboard/users", label: "Utilisateurs", icon: "users" as const },
     { href: "/dashboard/credit", label: "Crédit", icon: "percent" as const },
+    { href: "/dashboard/games", label: "Jeux", icon: "coin" as const },
     { href: "/dashboard/transactions", label: "Transactions", icon: "grid" as const },
     { href: "/dashboard/liquidity", label: "Liquidité (swap)", icon: "droplet" as const },
     { href: "/dashboard/settings", label: "Paramètres", icon: "gear" as const },
