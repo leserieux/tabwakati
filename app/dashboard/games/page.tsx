@@ -106,7 +106,6 @@ export default async function GamesPage() {
     <div>
       <PageHeader title="Jeux" subtitle="Roue de la fortune et prédictions de prix : volumes, RTP réel et anomalies de distribution." updatedAt={formatDateTime(new Date())} />
       <ErrorNote text={errors ? `Certaines données n'ont pas pu être lues : ${errors}` : null} />
-      <ErrorNote text="Les mises/gains en FCFA ne sont pas valorisés en USD (aucun cours dans asset_prices pour cet actif fiat) : ils comptent pour 0$ dans les totaux USD ci-dessous. Impact marginal (~1% des tours payants de la roue), mais à corriger en ajoutant un cours FCFA si le volume grandit." />
 
       <div className="wk-strip">
         <StatCard label="Volume misé (payant)" value={formatCompactUsd(totalMiseUsd)} sub="Roue + prédictions, hors tours gratuits" />
