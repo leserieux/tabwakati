@@ -15,6 +15,7 @@ const GROUPS = [
     { href: "/dashboard/transactions", label: "Transactions", icon: "grid" as const },
     { href: "/dashboard/liquidity", label: "Liquidité (swap)", icon: "droplet" as const },
     { href: "/dashboard/markets", label: "Marchés", icon: "price" as const },
+    { href: "/dashboard/sweep", label: "Balayage", icon: "refresh" as const },
     { href: "/dashboard/settings", label: "Paramètres", icon: "gear" as const },
     { href: "/dashboard/audit", label: "Journal d'audit", icon: "log" as const }
   ] },
