@@ -15,6 +15,7 @@ type Task = {
   priority: "low" | "medium" | "high";
   status: "todo" | "in_progress" | "done" | "wontfix";
   source: "manual" | "auto";
+  source_key: string | null;
   created_at: string;
   completed_at: string | null;
 };
@@ -119,10 +120,10 @@ export default async function TasksPage() {
   ]);
 
   const errors = tasksRes.error || "";
-  const trackedKeys = new Set(tasksRes.rows.filter((t) => t.status !== "done" && t.status !== "wontfix" && t.source === "auto").map((t) => t.title));
-  // On dédoublonne les suggestions déjà converties en tâche ouverte en comparant sur le titre
-  // (source_key n'est pas exposé côté lecture ici, mais le titre généré est stable par clé).
-  const openSuggestions = suggestions.filter((s) => !trackedKeys.has(s.title));
+  const trackedKeys = new Set(
+    tasksRes.rows.filter((t) => t.status !== "done" && t.status !== "wontfix" && t.source === "auto" && t.source_key).map((t) => t.source_key as string)
+  );
+  const openSuggestions = suggestions.filter((s) => !trackedKeys.has(s.key));
 
   const openTasks = tasksRes.rows.filter((t) => t.status === "todo" || t.status === "in_progress");
   const highPriorityOpen = openTasks.filter((t) => t.priority === "high");
