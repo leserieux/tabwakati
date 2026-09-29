@@ -322,95 +322,6 @@ export async function deletePaymentCountry(formData: FormData) {
   });
 }
 
-export async function updateSupportedAsset(formData: FormData) {
-  const symbol = str(formData, "symbol");
-  const label = str(formData, "label") || symbol;
-  const patch = {
-    name: str(formData, "name"),
-    network: str(formData, "network"),
-    ledger_symbol: str(formData, "ledger_symbol") || symbol,
-    decimals: num(formData, "decimals") || 18,
-    coingecko_id: str(formData, "coingecko_id") || null,
-    is_native: bool(formData, "is_native"),
-    min_deposit: num(formData, "min_deposit"),
-    max_deposit: numOrNull(formData, "max_deposit"),
-    min_withdraw: num(formData, "min_withdraw"),
-    max_withdraw: numOrNull(formData, "max_withdraw"),
-    withdraw_fee: num(formData, "withdraw_fee"),
-    withdraw_fee_percentage: numOrNull(formData, "withdraw_fee_percentage"),
-    transfer_fee_percentage: num(formData, "transfer_fee_percentage"),
-    swap_fee_percentage: num(formData, "swap_fee_percentage"),
-    min_p2p_transfer: num(formData, "min_p2p_transfer"),
-    max_p2p_transfer: num(formData, "max_p2p_transfer"),
-    min_sweep: num(formData, "min_sweep"),
-    can_be_deposited: bool(formData, "can_be_deposited"),
-    can_be_withdrawn: bool(formData, "can_be_withdrawn"),
-    can_be_swapped: bool(formData, "can_be_swapped"),
-    can_be_p2p: bool(formData, "can_be_p2p"),
-    is_active: bool(formData, "is_active")
-  };
-  const before = await fetchOne("supported_assets", "symbol", symbol);
-  await apply({
-    action: "settings.supported_asset.update",
-    summary: label,
-    target: `supported_assets#${symbol}`,
-    changes: diffFields(before, patch),
-    run: () =>
-      getSupabaseAdmin()
-        .from("supported_assets")
-        .update(patch)
-        .eq("symbol", symbol)
-  });
-}
-
-export async function addSupportedAsset(formData: FormData) {
-  const symbol = str(formData, "symbol").toUpperCase();
-  const name = str(formData, "name");
-  const insertRow = {
-    symbol,
-    name,
-    network: str(formData, "network"),
-    ledger_symbol: str(formData, "ledger_symbol").toUpperCase() || symbol,
-    decimals: num(formData, "decimals") || 18,
-    coingecko_id: str(formData, "coingecko_id") || null,
-    is_native: bool(formData, "is_native"),
-    min_deposit: num(formData, "min_deposit"),
-    max_deposit: numOrNull(formData, "max_deposit"),
-    min_withdraw: num(formData, "min_withdraw"),
-    max_withdraw: numOrNull(formData, "max_withdraw"),
-    withdraw_fee: num(formData, "withdraw_fee"),
-    withdraw_fee_percentage: numOrNull(formData, "withdraw_fee_percentage"),
-    transfer_fee_percentage: num(formData, "transfer_fee_percentage") || 0.5,
-    swap_fee_percentage: num(formData, "swap_fee_percentage") || 0.5,
-    min_p2p_transfer: num(formData, "min_p2p_transfer"),
-    max_p2p_transfer: num(formData, "max_p2p_transfer") || 1000000,
-    min_sweep: num(formData, "min_sweep"),
-    can_be_deposited: bool(formData, "can_be_deposited"),
-    can_be_withdrawn: bool(formData, "can_be_withdrawn"),
-    can_be_swapped: bool(formData, "can_be_swapped"),
-    can_be_p2p: bool(formData, "can_be_p2p"),
-    is_active: bool(formData, "is_active")
-  };
-  await apply({
-    action: "settings.supported_asset.create",
-    summary: `${name || symbol} (ajouté)`,
-    target: `supported_assets#${symbol}`,
-    changes: diffFields(null, insertRow),
-    run: () => getSupabaseAdmin().from("supported_assets").insert(insertRow)
-  });
-}
-
-export async function deleteSupportedAsset(formData: FormData) {
-  const symbol = str(formData, "symbol");
-  const label = str(formData, "label") || symbol;
-  await apply({
-    action: "settings.supported_asset.delete",
-    summary: `${label} supprimé`,
-    target: `supported_assets#${symbol}`,
-    run: () => getSupabaseAdmin().from("supported_assets").delete().eq("symbol", symbol)
-  });
-}
-
 export async function updateCampayConfig(formData: FormData) {
   const patch = {
     sandbox_min_deposit: num(formData, "sandbox_min_deposit"),
@@ -429,5 +340,79 @@ export async function updateCampayConfig(formData: FormData) {
         .from("campay_config")
         .update({ ...patch, updated_at: new Date().toISOString() })
         .eq("id", 1)
+  });
+}
+
+export async function updateAsset(formData: FormData) {
+  const symbol = str(formData, "symbol");
+  const label = str(formData, "label") || symbol;
+  const patch = {
+    name: str(formData, "name"),
+    is_active: bool(formData, "is_active"),
+    can_be_deposited: bool(formData, "can_be_deposited"),
+    can_be_withdrawn: bool(formData, "can_be_withdrawn"),
+    can_be_swapped: bool(formData, "can_be_swapped"),
+    can_be_p2p: bool(formData, "can_be_p2p"),
+    min_deposit: numOrNull(formData, "min_deposit"),
+    max_deposit: numOrNull(formData, "max_deposit"),
+    min_withdraw: numOrNull(formData, "min_withdraw"),
+    max_withdraw: numOrNull(formData, "max_withdraw"),
+    withdraw_fee: num(formData, "withdraw_fee"),
+    withdraw_fee_percentage: numOrNull(formData, "withdraw_fee_percentage"),
+    transfer_fee_percentage: num(formData, "transfer_fee_percentage"),
+    swap_fee_percentage: num(formData, "swap_fee_percentage"),
+    min_p2p_transfer: numOrNull(formData, "min_p2p_transfer"),
+    max_p2p_transfer: numOrNull(formData, "max_p2p_transfer"),
+    min_sweep: num(formData, "min_sweep")
+  };
+  const before = await fetchOne("supported_assets", "symbol", symbol);
+  await apply({
+    action: "settings.asset.update",
+    summary: label,
+    target: `supported_assets#${symbol}`,
+    changes: diffFields(before, patch),
+    run: () =>
+      getSupabaseAdmin()
+        .from("supported_assets")
+        .update(patch)
+        .eq("symbol", symbol)
+  });
+}
+
+export async function addAsset(formData: FormData) {
+  const symbol = str(formData, "symbol").toUpperCase();
+  const name = str(formData, "name");
+  const insertRow = {
+    symbol,
+    name,
+    network: str(formData, "network"),
+    ledger_symbol: str(formData, "ledger_symbol").toUpperCase() || symbol,
+    contract_address: str(formData, "contract_address") || null,
+    decimals: num(formData, "decimals") || 18,
+    is_native: bool(formData, "is_native"),
+    coingecko_id: str(formData, "coingecko_id") || null,
+    is_active: bool(formData, "is_active"),
+    can_be_deposited: bool(formData, "can_be_deposited"),
+    can_be_withdrawn: bool(formData, "can_be_withdrawn"),
+    can_be_swapped: bool(formData, "can_be_swapped"),
+    can_be_p2p: bool(formData, "can_be_p2p"),
+    min_deposit: numOrNull(formData, "min_deposit"),
+    max_deposit: numOrNull(formData, "max_deposit"),
+    min_withdraw: numOrNull(formData, "min_withdraw"),
+    max_withdraw: numOrNull(formData, "max_withdraw"),
+    withdraw_fee: num(formData, "withdraw_fee"),
+    withdraw_fee_percentage: numOrNull(formData, "withdraw_fee_percentage"),
+    transfer_fee_percentage: num(formData, "transfer_fee_percentage") || 0.5,
+    swap_fee_percentage: num(formData, "swap_fee_percentage") || 0.5,
+    min_p2p_transfer: numOrNull(formData, "min_p2p_transfer"),
+    max_p2p_transfer: numOrNull(formData, "max_p2p_transfer"),
+    min_sweep: num(formData, "min_sweep")
+  };
+  await apply({
+    action: "settings.asset.create",
+    summary: `${name || symbol} (ajouté)`,
+    target: `supported_assets#${symbol}`,
+    changes: diffFields(null, insertRow),
+    run: () => getSupabaseAdmin().from("supported_assets").insert(insertRow)
   });
 }

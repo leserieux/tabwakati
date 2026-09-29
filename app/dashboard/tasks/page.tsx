@@ -183,35 +183,35 @@ export default async function TasksPage() {
       </Section>
 
       <Section title="Ajouter une tâche">
-        <form action={addTask} className="wk-form-grid">
-          <div>
-            <label className="wk-label" htmlFor="title">Titre</label>
-            <input id="title" name="title" type="text" required className="wk-input" />
-          </div>
-          <div>
-            <label className="wk-label" htmlFor="category">Catégorie</label>
-            <select id="category" name="category" defaultValue="autre" className="wk-input">
-              <option value="produit">Produit</option>
-              <option value="fiabilite">Fiabilité</option>
-              <option value="securite">Sécurité</option>
-              <option value="donnees">Données</option>
-              <option value="autre">Autre</option>
-            </select>
-          </div>
-          <div>
-            <label className="wk-label" htmlFor="priority">Priorité</label>
-            <select id="priority" name="priority" defaultValue="medium" className="wk-input">
-              <option value="high">Haute</option>
-              <option value="medium">Moyenne</option>
-              <option value="low">Basse</option>
-            </select>
-          </div>
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label className="wk-label" htmlFor="description">Description</label>
-            <textarea id="description" name="description" rows={2} className="wk-input" />
-          </div>
-        </form>
         <form action={addTask}>
+          <div className="wk-form-grid">
+            <div>
+              <label className="wk-label" htmlFor="title">Titre</label>
+              <input id="title" name="title" type="text" required className="wk-input" />
+            </div>
+            <div>
+              <label className="wk-label" htmlFor="category">Catégorie</label>
+              <select id="category" name="category" defaultValue="autre" className="wk-input">
+                <option value="produit">Produit</option>
+                <option value="fiabilite">Fiabilité</option>
+                <option value="securite">Sécurité</option>
+                <option value="donnees">Données</option>
+                <option value="autre">Autre</option>
+              </select>
+            </div>
+            <div>
+              <label className="wk-label" htmlFor="priority">Priorité</label>
+              <select id="priority" name="priority" defaultValue="medium" className="wk-input">
+                <option value="high">Haute</option>
+                <option value="medium">Moyenne</option>
+                <option value="low">Basse</option>
+              </select>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label className="wk-label" htmlFor="description">Description</label>
+              <textarea id="description" name="description" rows={2} className="wk-input" />
+            </div>
+          </div>
           <button type="submit" className="wk-submit-sm" style={{ marginTop: 8 }}>Ajouter</button>
         </form>
       </Section>

@@ -14,10 +14,9 @@ import {
   updatePaymentCountry,
   addPaymentCountry,
   deletePaymentCountry,
-  updateSupportedAsset,
-  addSupportedAsset,
-  deleteSupportedAsset,
-  updateCampayConfig
+  updateCampayConfig,
+  updateAsset,
+  addAsset
 } from "./actions";
 
 export const runtime = "nodejs";
@@ -88,6 +87,24 @@ function SelectField({ label, name, defaultValue, options, hint }: { label: stri
   );
 }
 
+/** Pour un choix à 2-3 options courtes : plus lisible en un coup d'œil qu'un menu déroulant. */
+function RadioGroup({ label, name, defaultValue, options, hint }: { label: string; name: string; defaultValue: string; options: { value: string; label: string }[]; hint?: string }) {
+  return (
+    <div>
+      <span className="wk-label">{label}</span>
+      <div className="wk-radio-group">
+        {options.map((o) => (
+          <label key={o.value} className="wk-radio-option">
+            <input type="radio" name={name} value={o.value} defaultChecked={o.value === defaultValue} />
+            {o.label}
+          </label>
+        ))}
+      </div>
+      {hint && <div className="wk-hint" style={{ marginTop: 4 }}>{hint}</div>}
+    </div>
+  );
+}
+
 function Toggle({ label, name, defaultChecked }: { label: string; name: string; defaultChecked: boolean }) {
   return (
     <label className="wk-field-toggle">
@@ -120,16 +137,17 @@ function Card({ title, hint, updatedAt, headerExtra, action, children }: { title
 
 export default async function SettingsPage({ searchParams }: { searchParams: { saved?: string; error?: string; msg?: string } }) {
   const db = getSupabaseAdmin();
-  const [wheel, prediction, scoreCredit, campay, assets, countries, providers, stakingPools, wakatiState] = await Promise.all([
+  const [wheel, prediction, scoreCredit, campay, assets, countries, providers, stakingPools, wakatiState, assetsFull] = await Promise.all([
     q<any>(db.from("wheel_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("prediction_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("score_credit_config").select("*").eq("id", 1).limit(1)),
     q<any>(db.from("campay_config").select("*").eq("id", 1).limit(1)),
-    q<any>(db.from("supported_assets").select("*").order("symbol")),
+    q<{ symbol: string; name: string; is_active: boolean }>(db.from("supported_assets").select("symbol, name, is_active").order("symbol")),
     q<any>(db.from("payment_countries").select("*").order("sort_order")),
     q<{ code: string; name: string; is_active: boolean }>(db.from("payment_providers").select("code, name, is_active").order("code")),
     q<any>(db.from("staking_pools").select("*").order("sort_order").order("created_at")),
-    q<any>(db.from("wakati_reserve_state").select("*").eq("id", 1).limit(1))
+    q<any>(db.from("wakati_reserve_state").select("*").eq("id", 1).limit(1)),
+    q<any>(db.from("supported_assets").select("*").order("symbol"))
   ]);
 
   const w = wheel.rows[0];
@@ -138,7 +156,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
   const c = campay.rows[0];
   const ws = wakatiState.rows[0];
 
-  const queryErrors = [wheel.error, prediction.error, scoreCredit.error, campay.error, assets.error, countries.error, providers.error, stakingPools.error, wakatiState.error].filter(Boolean).join(" · ");
+  const queryErrors = [wheel.error, prediction.error, scoreCredit.error, campay.error, assets.error, countries.error, providers.error, stakingPools.error, wakatiState.error, assetsFull.error].filter(Boolean).join(" · ");
   const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
 
   return (
@@ -179,7 +197,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
               <input type="hidden" name="id" value={sp.id} />
               <input type="hidden" name="label" value={`${sp.name} (${sp.asset_symbol})`} />
               <TextField label="Nom" name="name" defaultValue={sp.name} />
-              <SelectField
+              <RadioGroup
                 label="Type"
                 name="staking_type"
                 defaultValue={sp.staking_type}
@@ -213,7 +231,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
             <div className="wk-form-grid">
               <TextField label="Nom" name="name" defaultValue="" />
               <AssetSelect label="Actif" name="asset_symbol" defaultValue="WAKATI" assets={assets.rows} />
-              <SelectField
+              <RadioGroup
                 label="Type"
                 name="staking_type"
                 defaultValue="flexible"
@@ -389,52 +407,36 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
         <div className="wk-alert-bad">Section Campay : aucune ligne trouvée dans campay_config (id=1).</div>
       )}
 
-      <Section
-        title="Actifs supportés"
-        hint="Réseau, limites de dépôt/retrait, frais et activation par flux (dépôt, retrait, swap, P2P). contract_address, icon_url et derivation_path existent dans cette table mais ne sont pas éditables ici — ce sont des réglages d'intégration technique, pas des paramètres business."
-      >
-        {assets.rows.length === 0 ? (
+      <Section title="Actifs" hint="Devises et cryptos supportées par la plateforme. Pas de suppression possible : un actif est référencé par les transactions, soldes et historiques existants — on le désactive au lieu de le supprimer.">
+        {assetsFull.rows.length === 0 ? (
           <div className="wk-alert-bad">Aucun actif trouvé dans supported_assets.</div>
         ) : (
-          assets.rows.map((a: any) => (
+          assetsFull.rows.map((a: any) => (
             <Card
               key={a.symbol}
               title={`${a.name} (${a.symbol})`}
-              hint={`${a.network} · ledger : ${a.ledger_symbol} · ${a.decimals} décimales${a.coingecko_id ? ` · coingecko : ${a.coingecko_id}` : ""}.`}
-              updatedAt={null}
-              action={updateSupportedAsset}
-              headerExtra={
-                <ConfirmDeleteButton
-                  action={deleteSupportedAsset}
-                  hiddenFields={{ symbol: a.symbol, label: `${a.name} (${a.symbol})` }}
-                  confirmText={`Supprimer définitivement ${a.name} (${a.symbol}) ? Impossible si l'actif est encore référencé ailleurs (soldes, transactions, config). Cette action est irréversible.`}
-                />
-              }
+              hint={`Réseau ${a.network}${a.is_native ? " · natif" : ""} — ${a.decimals} décimales. Champs techniques (adresse de contrat, décimales, réseau) non éditables ici pour éviter de casser des soldes déjà en circulation.`}
+              action={updateAsset}
             >
               <input type="hidden" name="symbol" value={a.symbol} />
               <input type="hidden" name="label" value={`${a.name} (${a.symbol})`} />
               <TextField label="Nom" name="name" defaultValue={a.name} />
-              <TextField label="Réseau" name="network" defaultValue={a.network} />
-              <TextField label="Symbole ledger (groupe d'affichage)" name="ledger_symbol" defaultValue={a.ledger_symbol} hint="Ex : USDC-BSC, USDC-ETH et USDC-POL partagent le ledger_symbol « USDC »." />
-              <Field label="Décimales" name="decimals" step="1" defaultValue={a.decimals} />
-              <TextField label="ID CoinGecko" name="coingecko_id" defaultValue={a.coingecko_id || ""} hint="Vide si non coté (ex : jetons fiat)." />
-              <Toggle label="Actif natif du réseau" name="is_native" defaultChecked={a.is_native} />
-              <Field label="Dépôt min" name="min_deposit" defaultValue={a.min_deposit} />
-              <Field label="Dépôt max" name="max_deposit" defaultValue={a.max_deposit ?? ""} hint="Vide = illimité." />
-              <Field label="Retrait min" name="min_withdraw" defaultValue={a.min_withdraw} />
-              <Field label="Retrait max" name="max_withdraw" defaultValue={a.max_withdraw ?? ""} hint="Vide = illimité." />
-              <Field label="Frais de retrait (fixe)" name="withdraw_fee" defaultValue={a.withdraw_fee} />
-              <Field label="Frais de retrait (%)" name="withdraw_fee_percentage" defaultValue={a.withdraw_fee_percentage ?? ""} hint="Vide = aucun frais en %." />
-              <Field label="Frais de transfert P2P (%)" name="transfer_fee_percentage" defaultValue={a.transfer_fee_percentage} />
-              <Field label="Frais de swap (%)" name="swap_fee_percentage" defaultValue={a.swap_fee_percentage} />
-              <Field label="P2P min" name="min_p2p_transfer" defaultValue={a.min_p2p_transfer} />
-              <Field label="P2P max" name="max_p2p_transfer" defaultValue={a.max_p2p_transfer} />
-              <Field label="Seuil de balayage min (sweep)" name="min_sweep" defaultValue={a.min_sweep} hint="En dessous, les fonds ne sont pas balayés vers la trésorerie (coût de gas non rentable)." />
+              <Toggle label="Actif (global)" name="is_active" defaultChecked={a.is_active} />
               <Toggle label="Dépôts activés" name="can_be_deposited" defaultChecked={a.can_be_deposited} />
               <Toggle label="Retraits activés" name="can_be_withdrawn" defaultChecked={a.can_be_withdrawn} />
-              <Toggle label="Swap activé" name="can_be_swapped" defaultChecked={a.can_be_swapped} />
-              <Toggle label="P2P activé" name="can_be_p2p" defaultChecked={a.can_be_p2p} />
-              <Toggle label="Actif (visible et utilisable)" name="is_active" defaultChecked={a.is_active} />
+              <Toggle label="Échange (swap) activé" name="can_be_swapped" defaultChecked={a.can_be_swapped} />
+              <Toggle label="Transfert P2P activé" name="can_be_p2p" defaultChecked={a.can_be_p2p} />
+              <Field label="Dépôt min" name="min_deposit" defaultValue={a.min_deposit ?? ""} hint="Vide = pas de minimum." />
+              <Field label="Dépôt max" name="max_deposit" defaultValue={a.max_deposit ?? ""} hint="Vide = illimité." />
+              <Field label="Retrait min" name="min_withdraw" defaultValue={a.min_withdraw ?? ""} hint="Vide = pas de minimum." />
+              <Field label="Retrait max" name="max_withdraw" defaultValue={a.max_withdraw ?? ""} hint="Vide = illimité." />
+              <Field label="Frais de retrait (fixe)" name="withdraw_fee" defaultValue={a.withdraw_fee} />
+              <Field label="Frais de retrait (%)" name="withdraw_fee_percentage" defaultValue={a.withdraw_fee_percentage ?? ""} hint="Vide = pas de frais en %." />
+              <Field label="Frais de transfert P2P (%)" name="transfer_fee_percentage" defaultValue={a.transfer_fee_percentage} />
+              <Field label="Frais d'échange / swap (%)" name="swap_fee_percentage" defaultValue={a.swap_fee_percentage} />
+              <Field label="Transfert P2P min" name="min_p2p_transfer" defaultValue={a.min_p2p_transfer ?? ""} hint="Vide = pas de minimum." />
+              <Field label="Transfert P2P max" name="max_p2p_transfer" defaultValue={a.max_p2p_transfer ?? ""} hint="Vide = illimité." />
+              <Field label="Seuil de sweep" name="min_sweep" defaultValue={a.min_sweep} hint="Montant minimum avant remontée vers le trésor." />
             </Card>
           ))
         )}
@@ -443,43 +445,42 @@ export default async function SettingsPage({ searchParams }: { searchParams: { s
           <div className="wk-settings-head">
             <div>
               <h3 className="wk-settings-title">Ajouter un actif</h3>
-              <p className="wk-settings-hint">L'actif est créé inactif par défaut — active-le une fois les limites et frais vérifiés. Le symbole ne pourra plus être modifié après création (il est référencé partout : soldes, transactions, prix).</p>
+              <p className="wk-settings-hint">
+                Réservé aux champs techniques (réseau, décimales, contrat) qui ne se modifient qu'à la création. L'actif est créé désactivé par défaut — vérifie les réglages avant de l'activer.
+              </p>
             </div>
           </div>
-          <form action={addSupportedAsset}>
+          <form action={addAsset}>
             <div className="wk-form-grid">
-              <TextField label="Symbole (ex : USDT-BSC)" name="symbol" defaultValue="" />
+              <TextField label="Symbole (ex : SOL)" name="symbol" defaultValue="" />
               <TextField label="Nom" name="name" defaultValue="" />
-              <TextField label="Réseau" name="network" defaultValue="" />
-              <TextField label="Symbole ledger (groupe d'affichage)" name="ledger_symbol" defaultValue="" hint="Vide = identique au symbole." />
+              <TextField label="Réseau (ex : Solana, Fiat, BSC)" name="network" defaultValue="" />
+              <TextField label="Symbole ledger (interne)" name="ledger_symbol" defaultValue="" hint="Vide = même valeur que le symbole." />
+              <TextField label="Adresse de contrat" name="contract_address" defaultValue="" hint="Laisser vide pour un actif natif ou fiat." />
               <Field label="Décimales" name="decimals" step="1" defaultValue={18} />
-              <TextField label="ID CoinGecko" name="coingecko_id" defaultValue="" hint="Vide si non coté." />
               <Toggle label="Actif natif du réseau" name="is_native" defaultChecked={false} />
-              <Field label="Dépôt min" name="min_deposit" defaultValue={0} />
-              <Field label="Dépôt max" name="max_deposit" defaultValue="" hint="Vide = illimité." />
-              <Field label="Retrait min" name="min_withdraw" defaultValue={0} />
-              <Field label="Retrait max" name="max_withdraw" defaultValue="" hint="Vide = illimité." />
-              <Field label="Frais de retrait (fixe)" name="withdraw_fee" defaultValue={0} />
-              <Field label="Frais de retrait (%)" name="withdraw_fee_percentage" defaultValue="" hint="Vide = aucun frais en %." />
-              <Field label="Frais de transfert P2P (%)" name="transfer_fee_percentage" defaultValue={0.5} />
-              <Field label="Frais de swap (%)" name="swap_fee_percentage" defaultValue={0.5} />
-              <Field label="P2P min" name="min_p2p_transfer" defaultValue={0} />
-              <Field label="P2P max" name="max_p2p_transfer" defaultValue={1000000} />
-              <Field label="Seuil de balayage min (sweep)" name="min_sweep" defaultValue={0} />
+              <TextField label="ID CoinGecko" name="coingecko_id" defaultValue="" hint="Pour la récupération automatique du prix, si applicable." />
               <Toggle label="Dépôts activés" name="can_be_deposited" defaultChecked={true} />
               <Toggle label="Retraits activés" name="can_be_withdrawn" defaultChecked={true} />
-              <Toggle label="Swap activé" name="can_be_swapped" defaultChecked={true} />
-              <Toggle label="P2P activé" name="can_be_p2p" defaultChecked={true} />
-              <Toggle label="Actif (visible et utilisable)" name="is_active" defaultChecked={false} />
+              <Toggle label="Échange (swap) activé" name="can_be_swapped" defaultChecked={true} />
+              <Toggle label="Transfert P2P activé" name="can_be_p2p" defaultChecked={true} />
+              <Field label="Dépôt min" name="min_deposit" defaultValue="" hint="Vide = pas de minimum." />
+              <Field label="Dépôt max" name="max_deposit" defaultValue="" hint="Vide = illimité." />
+              <Field label="Retrait min" name="min_withdraw" defaultValue="" hint="Vide = pas de minimum." />
+              <Field label="Retrait max" name="max_withdraw" defaultValue="" hint="Vide = illimité." />
+              <Field label="Frais de retrait (fixe)" name="withdraw_fee" defaultValue={0} />
+              <Field label="Frais de retrait (%)" name="withdraw_fee_percentage" defaultValue="" hint="Vide = pas de frais en %." />
+              <Field label="Frais de transfert P2P (%)" name="transfer_fee_percentage" defaultValue={0.5} />
+              <Field label="Frais d'échange / swap (%)" name="swap_fee_percentage" defaultValue={0.5} />
+              <Field label="Transfert P2P min" name="min_p2p_transfer" defaultValue="" hint="Vide = pas de minimum." />
+              <Field label="Transfert P2P max" name="max_p2p_transfer" defaultValue="" hint="Vide = illimité." />
+              <Field label="Seuil de sweep" name="min_sweep" defaultValue={0} />
+              <Toggle label="Actif (global)" name="is_active" defaultChecked={false} />
             </div>
             <button type="submit" className="wk-submit-sm">Ajouter l'actif</button>
           </form>
         </div>
       </Section>
-
-      <div className="wk-hint" style={{ marginTop: 4 }}>
-        Prochain écran de gestion dédié à prévoir si besoin : fournisseurs de paiement (payment_providers), actuellement modifiables uniquement en base.
-      </div>
     </div>
   );
 }
