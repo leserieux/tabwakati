@@ -28,6 +28,16 @@ const PRIORITY_TONE: Record<string, Tone> = { high: "bad", medium: "warn", low: 
 const STATUS_LABEL: Record<string, string> = { todo: "À faire", in_progress: "En cours", done: "Terminé", wontfix: "Ne sera pas fait" };
 const STATUS_ORDER: Record<string, number> = { todo: 0, in_progress: 1, done: 2, wontfix: 3 };
 
+function formatDuration(ms: number): string {
+  const mins = ms / 60000;
+  if (mins < 60) return `${Math.max(1, Math.round(mins))} min`;
+  const hours = mins / 60;
+  if (hours < 48) return `${Math.round(hours)} h`;
+  const days = hours / 24;
+  if (days < 60) return `${Math.round(days)} j`;
+  return `${Math.round(days / 30)} mois`;
+}
+
 function maxAgeHours(coingeckoId: string | null, network: string): number {
   if (coingeckoId) return 3;
   if (network === "Fiat") return 24 * 30;
@@ -129,7 +139,17 @@ export default async function TasksPage() {
   const highPriorityOpen = openTasks.filter((t) => t.priority === "high");
   const doneThisMonth = tasksRes.rows.filter((t) => t.status === "done" && t.completed_at && new Date(t.completed_at).getMonth() === new Date().getMonth() && new Date(t.completed_at).getFullYear() === new Date().getFullYear());
 
-  const sortedTasks = [...tasksRes.rows].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || (a.priority === b.priority ? 0 : a.priority === "high" ? -1 : b.priority === "high" ? 1 : 0) || +new Date(b.created_at) - +new Date(a.created_at));
+  const sortedOpenTasks = [...openTasks].sort(
+    (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || (a.priority === b.priority ? 0 : a.priority === "high" ? -1 : b.priority === "high" ? 1 : 0) || +new Date(b.created_at) - +new Date(a.created_at)
+  );
+
+  const closedTasks = tasksRes.rows.filter((t) => t.status === "done" || t.status === "wontfix");
+  const sortedClosedTasks = [...closedTasks].sort((a, b) => +new Date(b.completed_at || b.created_at) - +new Date(a.completed_at || a.created_at));
+
+  const resolvedWithDuration = tasksRes.rows.filter((t) => t.status === "done" && t.completed_at);
+  const avgResolutionMs = resolvedWithDuration.length
+    ? resolvedWithDuration.reduce((sum, t) => sum + (new Date(t.completed_at as string).getTime() - new Date(t.created_at).getTime()), 0) / resolvedWithDuration.length
+    : null;
 
   return (
     <div>
@@ -140,7 +160,7 @@ export default async function TasksPage() {
         <StatCard label="Tâches ouvertes" value={String(openTasks.length)} sub={`${highPriorityOpen.length} en priorité haute`} tone={highPriorityOpen.length > 0 ? "bad" : undefined} />
         <StatCard label="Suggestions non traitées" value={String(openSuggestions.length)} sub="Anomalies détectées ailleurs dans le dashboard" tone={openSuggestions.length > 0 ? "warn" : "ok"} />
         <StatCard label="Terminées ce mois-ci" value={String(doneThisMonth.length)} sub="Tâches marquées comme faites" />
-        <StatCard label="Total suivi" value={String(tasksRes.rows.length)} sub="Toutes tâches confondues" />
+        <StatCard label="Temps moyen de résolution" value={avgResolutionMs !== null ? formatDuration(avgResolutionMs) : "—"} sub={`Sur ${resolvedWithDuration.length} tâche(s) terminée(s)`} />
       </div>
 
       <Section title="Suggestions automatiques" hint="Générées à chaque chargement de page à partir des anomalies déjà détectées ailleurs (Marchés, Utilisateurs, Balayage, Crédit, Jeux). Convertis-les en tâche pour les suivre, ou ignore-les si ce n'est pas pertinent.">
@@ -216,9 +236,9 @@ export default async function TasksPage() {
         </form>
       </Section>
 
-      <Section title="Toutes les tâches">
-        {sortedTasks.length === 0 ? (
-          <Empty text="Aucune tâche pour l'instant." />
+      <Section title="Tâches ouvertes" hint="À faire ou en cours. Change le statut directement depuis la liste.">
+        {sortedOpenTasks.length === 0 ? (
+          <Empty text="Aucune tâche ouverte." />
         ) : (
           <TableWrap>
             <thead>
@@ -232,7 +252,7 @@ export default async function TasksPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedTasks.map((t) => (
+              {sortedOpenTasks.map((t) => (
                 <tr key={t.id}>
                   <Td label="Tâche">
                     <div>{t.title} {t.source === "auto" && <Pill tone="info">Auto</Pill>}</div>
@@ -249,6 +269,48 @@ export default async function TasksPage() {
                   </Td>
                 </tr>
               ))}
+            </tbody>
+          </TableWrap>
+        )}
+      </Section>
+
+      <Section title="Tâches terminées" hint="Terminées ou classées « ne sera pas fait », les plus récentes d'abord, avec le temps écoulé entre la création et la clôture.">
+        {sortedClosedTasks.length === 0 ? (
+          <Empty text="Aucune tâche terminée pour l'instant." />
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Tâche</Th>
+                <Th>Catégorie</Th>
+                <Th>Priorité</Th>
+                <Th>Résultat</Th>
+                <Th hideSm>Clôturée le</Th>
+                <Th right>Temps de résolution</Th>
+                <Th>Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedClosedTasks.map((t) => {
+                const duration = t.completed_at ? formatDuration(new Date(t.completed_at).getTime() - new Date(t.created_at).getTime()) : null;
+                return (
+                  <tr key={t.id}>
+                    <Td label="Tâche">
+                      <div>{t.title} {t.source === "auto" && <Pill tone="info">Auto</Pill>}</div>
+                      {t.description && <div className="wk-asset-sub">{t.description}</div>}
+                    </Td>
+                    <Td label="Catégorie">{CATEGORY_LABEL[t.category] || t.category}</Td>
+                    <Td label="Priorité"><Pill tone={PRIORITY_TONE[t.priority]}>{PRIORITY_LABEL[t.priority]}</Pill></Td>
+                    <Td label="Résultat"><Pill tone={t.status === "done" ? "ok" : "info"}>{STATUS_LABEL[t.status]}</Pill></Td>
+                    <Td hideSm label="Clôturée le"><span className="wk-asset-sub">{t.completed_at ? formatDateTime(new Date(t.completed_at)) : "—"}</span></Td>
+                    <Td right label="Temps de résolution">{duration ?? "—"}</Td>
+                    <Td label="Actions">
+                      <StatusSelect action={updateTaskStatus} id={t.id} title={t.title} status={t.status} />
+                      <DeleteTaskButton action={deleteTask} id={t.id} title={t.title} />
+                    </Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </TableWrap>
         )}
