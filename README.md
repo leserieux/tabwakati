@@ -32,3 +32,4 @@ Les écrans génériques d'administration traitent **tous les actifs de la même
 ## Journal
 
 - 2026-09-25 — Mise en place du dashboard analytics visible et correction des dépendances SQL pour utiliser uniquement les relations existantes.
+- 2026-10-03 — Navigation ramenée à 8 entrées avec onglets de section (`lib/nav-config.ts`, `components/section-tabs.tsx`) ; « Activité » fusionnée dans la Vue d'ensemble (redirection conservée) ; valorisation centralisée dans `lib/valuation.ts` (un prix <= 0 n'est plus un prix : l'actif est signalé « non valorisé ») ; compteur de tours de roue recompté depuis `wheel_spins` ; trigger de total staké rebranché.

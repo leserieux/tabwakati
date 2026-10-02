@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { isValidPrice } from "@/lib/valuation";
 
 export { getSupabaseAdmin };
 
@@ -15,12 +16,12 @@ export async function q<T = any>(
   }
 }
 
-/** Map symbole -> prix USD (table asset_prices). */
+/** Map symbole -> prix USD valide (> 0) depuis asset_prices. Les prix à 0 sont exclus : actif "non valorisé". */
 export async function loadPrices(): Promise<Map<string, number>> {
   const { rows } = await q<{ asset_symbol: string; price_usd: number }>(
     getSupabaseAdmin().from("asset_prices").select("asset_symbol, price_usd")
   );
   const map = new Map<string, number>();
-  for (const r of rows) map.set(r.asset_symbol, Number(r.price_usd));
+  for (const r of rows) { const p = Number(r.price_usd); if (isValidPrice(p)) map.set(r.asset_symbol, p); }
   return map;
 }

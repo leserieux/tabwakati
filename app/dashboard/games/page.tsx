@@ -91,6 +91,11 @@ export default async function GamesPage() {
     q<WheelStreakRow>(db.from("user_wheel_stats").select("user_id, longest_streak, total_spins").order("longest_streak", { ascending: false }).limit(10))
   ]);
 
+  // user_wheel_stats.total_spins n'est pas fiable (écart avec wheel_spins) : on recompte à la source pour les lignes affichées.
+  const shownStreaks = wheelStreakRes.rows.filter((r) => r.longest_streak > 5).slice(0, 10);
+  const realCounts = await Promise.all(shownStreaks.map((r) => db.from("wheel_spins").select("id", { count: "exact", head: true }).eq("user_id", r.user_id)));
+  shownStreaks.forEach((r, i) => { r.total_spins = realCounts[i].count ?? r.total_spins; });
+
   const wheel = wheelSummaryRes.data as WheelSummary | null;
   const wheelConfig = wheelConfigRes.data as WheelConfig | null;
   const pred = predSummaryRes.data as PredictionSummary | null;
@@ -171,7 +176,7 @@ export default async function GamesPage() {
               </tr>
             </thead>
             <tbody>
-              {wheelStreakRes.rows.filter((r) => r.longest_streak > 5).slice(0, 10).map((row) => (
+              {shownStreaks.map((row) => (
                 <tr key={row.user_id}>
                   <Td label="Utilisateur"><a className="wk-link" href={`/dashboard/users/${row.user_id}`}><div className="wk-asset-sub">{shortId(row.user_id)}</div></a></Td>
                   <Td right label="Série">{row.longest_streak}</Td>

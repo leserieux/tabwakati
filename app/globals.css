@@ -334,3 +334,9 @@ a { color: inherit; }
   .wk-table .wk-td[data-label=""]::before { display: none; }
   .wk-table .wk-hide-sm { display: none; }
 }
+
+/* Onglets de section (navigation fusionnée) */
+.wk-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 18px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; width: fit-content; max-width: 100%; }
+.wk-tab { padding: 8px 14px; border-radius: 9px; font-size: 14px; font-weight: 500; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.wk-tab:hover { color: var(--text, inherit); }
+.wk-tab.active { background: var(--accent); color: #fff; }

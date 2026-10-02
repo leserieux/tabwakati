@@ -1,4 +1,5 @@
 import { getSupabaseAdmin, q } from "@/lib/data";
+import { isValidPrice } from "@/lib/valuation";
 
 export type UserAssetSummary = {
   asset: string;
@@ -23,7 +24,7 @@ export async function loadUserAssetSummaries(): Promise<{ rows: UserAssetSummary
     q<any>(db.from("asset_prices").select("asset_symbol, price_usd"))
   ]);
 
-  const priceOf = new Map(prices.rows.map((row) => [String(row.asset_symbol), Number(row.price_usd)]));
+  const priceOf = new Map(prices.rows.filter((row) => isValidPrice(Number(row.price_usd))).map((row) => [String(row.asset_symbol), Number(row.price_usd)]));
   const byAsset = new Map<string, UserAssetSummary>();
 
   for (const asset of assets.rows) {

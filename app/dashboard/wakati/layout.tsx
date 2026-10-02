@@ -1,6 +1,7 @@
 import { loadWakati, EXPLORER } from "@/lib/wakati";
 import { formatPrice, formatPct, shortAddress, formatDateTime } from "@/lib/format";
 import { Pill, Icon } from "@/components/ui";
+import SectionTabs from "@/components/section-tabs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,7 @@ export default async function WakatiLayout({ children }: { children: React.React
 
   return (
     <div>
+      <SectionTabs group="wakati" />
       <div className="wk-token">
         <div className="wk-token-mark">W</div>
         <div className="wk-token-id">

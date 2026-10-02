@@ -2,43 +2,18 @@
 
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui";
-
-const GROUPS = [
-  { label: "Console", items: [
-    { href: "/dashboard", label: "Vue d'ensemble", icon: "grid" as const },
-    { href: "/dashboard/analytics", label: "Analytics plateforme", icon: "activity" as const },
-    { href: "/dashboard/treasury", label: "Solvabilité", icon: "shield" as const },
-    { href: "/dashboard/activity", label: "Activité", icon: "activity" as const },
-    { href: "/dashboard/users", label: "Utilisateurs", icon: "users" as const },
-    { href: "/dashboard/credit", label: "Crédit", icon: "percent" as const },
-    { href: "/dashboard/games", label: "Jeux", icon: "coin" as const },
-    { href: "/dashboard/transactions", label: "Transactions", icon: "grid" as const },
-    { href: "/dashboard/liquidity", label: "Liquidité (swap)", icon: "droplet" as const },
-    { href: "/dashboard/markets", label: "Marchés", icon: "price" as const },
-    { href: "/dashboard/sweep", label: "Balayage", icon: "refresh" as const },
-    { href: "/dashboard/tasks", label: "Tâches", icon: "check" as const },
-    { href: "/dashboard/settings", label: "Paramètres", icon: "gear" as const },
-    { href: "/dashboard/audit", label: "Journal d'audit", icon: "log" as const }
-  ] },
-  { label: "Actifs spécialisés", items: [
-    { href: "/dashboard/wakati", label: "Tokenomics WAKATI", icon: "coin" as const },
-    { href: "/dashboard/wakati/prix", label: "Prix et réserve WAKATI", icon: "price" as const },
-    { href: "/dashboard/wakati/staking", label: "Staking WAKATI", icon: "layers" as const },
-    { href: "/dashboard/wakati/detenteurs", label: "Détenteurs WAKATI", icon: "users" as const }
-  ] }
-];
+import { NAV, isEntryActive } from "@/lib/nav-config";
 
 export default function Nav({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   return <nav className="wk-nav" aria-label="Navigation principale">
-    {GROUPS.map((group) => <div key={group.label} className="wk-navgroup">
-      <div className="wk-navgroup-label">{group.label}</div>
-      <div className="wk-navgroup-items">{group.items.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-        return <a key={item.href} href={item.href} className={`wk-navitem ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? item.label : undefined}>
+    <div className="wk-navgroup">
+      <div className="wk-navgroup-items">{NAV.map((item) => {
+        const active = isEntryActive(pathname, item);
+        return <a key={item.key} href={item.href} className={`wk-navitem ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? item.label : undefined}>
           <span className="wk-navicon"><Icon name={item.icon} size={16} /></span><span>{item.label}</span>
         </a>;
       })}</div>
-    </div>)}
+    </div>
   </nav>;
 }
