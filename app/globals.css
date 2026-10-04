@@ -341,3 +341,5 @@ a { color: inherit; }
 .wk-tab:hover { color: var(--text, inherit); }
 .wk-tab.active { background: var(--accent); color: #fff; }
 .wk-alert-warn { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 12px 16px; font-size: 14px; margin-bottom: 16px; }
+.wk-ok { color: var(--ok); }
+.wk-bad { color: var(--bad); }

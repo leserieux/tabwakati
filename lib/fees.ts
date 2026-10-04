@@ -3,7 +3,7 @@ import { isValidPrice } from "@/lib/valuation";
 
 /** Libellés lisibles des types de frais (le type brut reste affiché si inconnu). */
 export const FEE_LABELS: Record<string, string> = {
-  game_house_edge: "Marge des jeux",
+  game_house_edge: "Mises encaissées (brut, jeux)",
   loan_origination_fee: "Frais de dossier prêt",
   loan_interest: "Intérêts prêt",
   score_loan_origination_fee: "Frais de dossier prêt score",

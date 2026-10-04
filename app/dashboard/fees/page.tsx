@@ -30,8 +30,10 @@ export default async function FeesPage() {
         <div className="wk-strip-item"><div className="wk-strip-label">Total réel</div><div className="wk-strip-value">{formatUsd(r.totalUsd)}</div><div className="wk-strip-sub">{formatNumber(r.count, 0)} lignes comptées</div></div>
         <div className="wk-strip-item"><div className="wk-strip-label">30 derniers jours</div><div className="wk-strip-value">{formatUsd(r.last30Usd)}</div><div className="wk-strip-sub">{formatPct(share(r.last30Usd))} du total</div></div>
         <div className="wk-strip-item"><div className="wk-strip-label">7 derniers jours</div><div className="wk-strip-value">{formatUsd(r.last7Usd)}</div><div className="wk-strip-sub">Aujourd'hui : {formatUsd(r.todayUsd)}</div></div>
-        <div className="wk-strip-item"><div className="wk-strip-label">Part des jeux</div><div className="wk-strip-value">{formatPct(share(gamesUsd), 0)}</div><div className="wk-strip-sub">{formatUsd(gamesUsd)} de marge</div></div>
+        <div className="wk-strip-item"><div className="wk-strip-label">Part des jeux (brut)</div><div className="wk-strip-value">{formatPct(share(gamesUsd), 0)}</div><div className="wk-strip-sub">{formatUsd(gamesUsd)} encaissés avant gains</div></div>
       </div>
+
+      <div className="wk-alert-warn">Les « mises encaissées » sont un montant brut : les gains payés aux joueurs en sortent ensuite. Pour savoir si les jeux rapportent vraiment, voir <a href="/dashboard/pnl" style={{ textDecoration: "underline" }}>Résultat</a>.</div>
 
       <Section title="Par type de frais" hint="Montants natifs à gauche, valeur en dollars au cours actuel à droite.">
         <TableWrap>

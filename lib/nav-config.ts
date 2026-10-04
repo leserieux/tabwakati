@@ -8,6 +8,7 @@ export interface NavEntry { key: string; label: string; icon: IconName; href: st
 /** Navigation unique : 8 entrées. Les sous-pages d'un même sujet sont des onglets (SectionTabs). */
 export const NAV: NavEntry[] = [
   { key: "overview", label: "Vue d'ensemble", icon: "grid", href: "/dashboard" },
+  { key: "pnl", label: "Résultat", icon: "activity", href: "/dashboard/pnl" },
   { key: "users", label: "Utilisateurs", icon: "users", href: "/dashboard/users" },
   { key: "transactions", label: "Transactions", icon: "log", href: "/dashboard/transactions" },
   { key: "treasury", label: "Trésorerie", icon: "shield", href: "/dashboard/treasury", tabs: [

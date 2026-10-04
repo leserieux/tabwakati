@@ -1,6 +1,7 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { loadUserAssetSummaries } from "@/lib/assets";
 import { computeCoverage, isValidPrice } from "@/lib/valuation";
+import { loadPnl } from "@/lib/pnl";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatNumber, formatUsd, formatPct, shortId } from "@/lib/format";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, ErrorNote } from "@/components/ui";
@@ -28,7 +29,7 @@ export default async function DashboardOverviewPage() {
   const since7d = new Date(now - 7 * DAY).toISOString();
   const days = makeDays(now);
   const stuckBefore = new Date(now - 3600 * 1000).toISOString();
-  const [users, volume, loans, recent, wallets, liabilities, assets, recon, fees, pending, failed, prices, stuck, sweepFails, paused] = await Promise.all([
+  const [users, volume, loans, recent, wallets, liabilities, assets, recon, fees, pending, failed, prices, stuck, sweepFails, paused, pnl30] = await Promise.all([
     q<any>(db.from("admin_users_overview").select("id, username, created_at, last_activity_at")),
     db.rpc("admin_volume_daily", { p_days: 7 }),
     q<{ loans_a_risque: number; score_loans_a_risque: number }>(db.from("admin_credit_summary").select("loans_a_risque, score_loans_a_risque")),
@@ -43,7 +44,8 @@ export default async function DashboardOverviewPage() {
     loadPrices(),
     db.from("transactions").select("id", { count: "exact", head: true }).in("status", ["pending", "processing"]).lt("created_at", stuckBefore),
     db.from("sweep_log").select("id", { count: "exact", head: true }).neq("status", "swept").eq("dry_run", false).gte("created_at", since7d),
-    q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false))
+    q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false)),
+    loadPnl(30).catch(() => null)
   ]);
 
   // Flux réels = dépôts, retraits, swaps, transferts (transactions réussies). Les mises de jeux sont comptées à part.
@@ -79,6 +81,7 @@ export default async function DashboardOverviewPage() {
   const alerts: Alert[] = [];
   if (missingUsd > 0.01) alerts.push({ tone: "bad", text: `Il manque environ ${formatUsd(missingUsd)} pour couvrir les passifs valorisés.` });
   if (unpriced.length > 0) alerts.push({ tone: "warn", text: `Sans prix valide (exclus de la valorisation) : ${unpriced.join(", ")}.` });
+  if (pnl30 && pnl30.current.net < -0.005) alerts.push({ tone: "warn", text: `Résultat net des 30 derniers jours : ${formatUsd(pnl30.current.net)} (jeux : ${formatUsd(pnl30.current.gameNet)}). Voir la page Résultat.` });
   if (pendingCount > 0) alerts.push({ tone: "warn", text: `${pendingCount} transaction(s) sont en attente${(stuck.count || 0) > 0 ? ` dont ${stuck.count} depuis plus d'une heure` : ""}.` });
   if (failedCount > 0) alerts.push({ tone: "warn", text: `${failedCount} transaction(s) ont échoué pendant les dernières 24 heures.` });
   if (atRisk > 0) alerts.push({ tone: "bad", text: `${atRisk} prêt(s) sont proches de la liquidation.` });
