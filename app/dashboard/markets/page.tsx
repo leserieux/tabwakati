@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Asset = { symbol: string; name: string; network: string; ledger_symbol: string; coingecko_id: string | null };
-type Price = { asset_symbol: string; price_usd: number; change_24h: number | null; market_cap: number | null; updated_at: string };
+type Price = { asset_symbol: string; price_usd: number | null; change_24h: number | null; market_cap: number | null; updated_at: string | null };
 type Latest = {
   asset_symbol: string;
   recorded_at: string;
@@ -48,7 +48,7 @@ const HOUR = 3_600_000;
 // - autre (ex : WAKATI, prix calculé une fois par jour) → périmé au-delà de 36 h
 function maxAgeHours(a: Asset): number {
   if (a.coingecko_id) return 3;
-  if (a.network === "Fiat") return 24 * 30;
+  if (a.network === "Fiat") return 48;
   return 36;
 }
 
@@ -74,7 +74,7 @@ export default async function MarketsPage() {
 
   const [assetsRes, pricesRes, latestRes, dailyRes, holdings] = await Promise.all([
     q<Asset>(db.from("supported_assets").select("symbol, name, network, ledger_symbol, coingecko_id").eq("is_active", true).order("symbol")),
-    q<Price>(db.from("asset_prices").select("asset_symbol, price_usd, change_24h, market_cap, updated_at")),
+    q<Price>(db.from("asset_prices_resolved").select("asset_symbol, price_usd, change_24h, market_cap, updated_at")),
     q<Latest>(db.from("admin_market_latest").select("*")),
     db.rpc("admin_market_daily", { p_days: 30 }),
     loadUserAssetSummaries()
@@ -103,12 +103,15 @@ export default async function MarketsPage() {
   }
 
   const rows: Row[] = assetsRes.rows.map((asset) => {
-    const p = priceBy.get(asset.symbol);
-    const l = latestBy.get(asset.symbol);
-    const price = p ? Number(p.price_usd) : null;
-    const ageHours = p ? (now - new Date(p.updated_at).getTime()) / HOUR : null;
+    const pRaw = priceBy.get(asset.symbol);
+    const p = pRaw && pRaw.updated_at ? pRaw : undefined;
+    // Les flux de marché (historique CoinGecko) sont stockés sous le ledger_symbol (USDC), pas USDC-BSC.
+    const feedKey = asset.ledger_symbol || asset.symbol;
+    const l = latestBy.get(feedKey) ?? latestBy.get(asset.symbol);
+    const price = p && p.price_usd !== null && Number(p.price_usd) > 0 ? Number(p.price_usd) : null;
+    const ageHours = p ? (now - new Date(p.updated_at as string).getTime()) / HOUR : null;
     const limit = maxAgeHours(asset);
-    const health: Health = !p ? "missing" : !(price !== null && price > 0) ? "zero" : ageHours !== null && ageHours > limit ? "stale" : "ok";
+    const health: Health = !p ? "missing" : price === null ? "zero" : ageHours !== null && ageHours > limit ? "stale" : "ok";
     const num = (v: number | null | undefined) => (v === null || v === undefined ? null : Number(v));
     return {
       asset,
@@ -123,7 +126,7 @@ export default async function MarketsPage() {
       ageHours,
       maxAgeHours: limit,
       health,
-      spark: (dailyBy.get(asset.symbol) || []).map((d) => d.close_usd),
+      spark: (dailyBy.get(feedKey) || dailyBy.get(asset.symbol) || []).map((d) => d.close_usd),
       hasMarketFeed: !!l && l.source === "coingecko"
     };
   });
@@ -144,7 +147,7 @@ export default async function MarketsPage() {
   // Statistiques sur la période disponible (jusqu'à 30 jours), par actif ayant au moins 2 jours de données
   const stats = rows
     .map((r) => {
-      const series = dailyBy.get(r.asset.symbol) || [];
+      const series = dailyBy.get(r.asset.ledger_symbol || r.asset.symbol) || dailyBy.get(r.asset.symbol) || [];
       if (series.length < 2) return null;
       const min = Math.min(...series.map((d) => d.low_usd));
       const max = Math.max(...series.map((d) => d.high_usd));

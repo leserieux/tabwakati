@@ -30,7 +30,7 @@ export default async function DashboardOverviewPage() {
   const stuckBefore = new Date(now - 3600 * 1000).toISOString();
   const [users, volume, loans, recent, wallets, liabilities, assets, recon, fees, pending, failed, prices, stuck, sweepFails, paused] = await Promise.all([
     q<any>(db.from("admin_users_overview").select("id, username, created_at, last_activity_at")),
-    q<any>(db.from("admin_transactions_overview").select("day, transaction_count, total_amount_usd").gte("day", days[0].key)),
+    db.rpc("admin_volume_daily", { p_days: 7 }),
     q<{ loans_a_risque: number; score_loans_a_risque: number }>(db.from("admin_credit_summary").select("loans_a_risque, score_loans_a_risque")),
     q<RecentTx>(db.from("transactions").select("id, user_id, type, asset_symbol, amount, status, created_at").order("created_at", { ascending: false }).limit(8)),
     q<any>(db.from("treasury_wallets").select("asset_symbol, balance")),
@@ -46,9 +46,13 @@ export default async function DashboardOverviewPage() {
     q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false))
   ]);
 
-  for (const row of volume.rows) {
+  // Flux réels = dépôts, retraits, swaps, transferts (transactions réussies). Les mises de jeux sont comptées à part.
+  const volumeRows = ((volume.data as any[]) || []) as any[];
+  let gamesWagered7d = 0;
+  for (const row of volumeRows) {
+    if (row.category === "game") { gamesWagered7d += Number(row.volume_usd || 0); continue; }
     const day = days.find((item) => item.key === String(row.day).slice(0, 10));
-    if (day) { day.volume = Number(row.total_amount_usd || 0); day.count = Number(row.transaction_count || 0); }
+    if (day) { day.volume += Number(row.volume_usd || 0); day.count += Number(row.tx_count || 0); }
   }
   const totalUsers = users.rows.length;
   const active7d = users.rows.filter((u) => u.last_activity_at && u.last_activity_at >= since7d).length;
@@ -90,7 +94,7 @@ export default async function DashboardOverviewPage() {
   const userIds = [...new Set(recent.rows.map((row) => row.user_id).filter(Boolean))];
   const names = userIds.length ? await q<any>(db.from("admin_users_overview").select("id, username").in("id", userIds)) : { rows: [] as any[] };
   const nameOf = new Map(names.rows.map((row) => [row.id, row.username || "Sans pseudo"]));
-  const queryErrors = [users.error, volume.error, loans.error, recent.error, wallets.error, liabilities.error, assets.error, recon.error?.message, fees.error?.message].filter(Boolean).join(" · ");
+  const queryErrors = [users.error, volume.error?.message, loans.error, recent.error, wallets.error, liabilities.error, assets.error, recon.error?.message, fees.error?.message].filter(Boolean).join(" · ");
 
   return <div>
     <PageHeader title="Vue d'ensemble" subtitle="État opérationnel et financier de la plateforme, actif par actif." updatedAt={formatDateTime(new Date())} />
@@ -99,7 +103,7 @@ export default async function DashboardOverviewPage() {
     <div className="wk-strip" style={{ marginTop: 12 }}><Metric label="Utilisateurs" value={formatCompactNumber(totalUsers)} sub={`${active7d} actifs sur 7 jours`} /><Metric label="Nouveaux utilisateurs" value={formatCompactNumber(new7d)} sub="Sur les 7 derniers jours" /><Metric label="Volume du jour" value={formatCompactUsd(volume24h)} sub="Jour UTC en cours" /><Metric label="Volume 7 jours" value={formatCompactUsd(volume7d)} sub={`${formatCompactNumber(count7d)} transaction(s)`} /></div>
     <div className="wk-grid-2" style={{ marginTop: 18 }}><Section title="Alertes opérationnelles"><div className="wk-panel">{alerts.map((alert, index) => <div key={`${alert.text}-${index}`} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: index < alerts.length - 1 ? "1px solid var(--line)" : undefined }}><span className={`wk-dot wk-dot-${alert.tone}`} style={{ marginTop: 6 }} /><span>{alert.text}</span></div>)}</div></Section><Section title="File de traitement"><div className="wk-panel"><QueueRow label="Transactions en attente" value={pendingCount} href="/dashboard/transactions?status=pending" tone={pendingCount ? "warn" : "ok"} /><QueueRow label="Échecs sur 24 heures" value={failedCount} href="/dashboard/transactions?status=failed" tone={failedCount ? "bad" : "ok"} /><QueueRow label="Prêts à risque" value={atRisk} href="/dashboard/credit" tone={atRisk ? "bad" : "ok"} /><QueueRow label="Actifs suivis" value={assets.rows.length} href="/dashboard/treasury" tone="info" /></div></Section></div>
     <Section title="Actifs des utilisateurs" hint="Chaque actif actif est agrégé séparément. Aucune devise n'est mélangée dans les quantités."><AssetTable rows={assets.rows} /></Section>
-    <Section title="Volume des transactions" hint="Volume valorisé en dollars sur les 7 derniers jours."><VolumeChart days={days} /></Section>
+    <Section title="Flux réels" hint={`Dépôts, retraits, swaps et transferts réussis des 7 derniers jours, valorisés au cours actuel. Mises de jeux : ${formatUsd(gamesWagered7d)} (non incluses).`}><VolumeChart days={days} /></Section>
     <Section title="Frais par actif" hint="Part de chaque actif dans les frais gagnés (valorisés en USD quand le prix est valide).">{feeRows.length === 0 ? <div className="wk-panel">Aucun frais collecté.</div> : <div className="wk-panel"><div className="wk-share">{feeRows.map((f) => <div key={f.asset} className="wk-share-row"><div className="wk-share-top"><span className="wk-asset">{f.asset}</span><span>{f.usd === null ? `${formatNumber(f.total)} (sans prix)` : formatUsd(f.usd)}</span></div><div className="wk-share-track"><div className="wk-share-fill" style={{ width: `${feesUsd > 0 && f.usd !== null ? (f.usd / feesUsd) * 100 : 0}%` }} /></div></div>)}</div></div>}</Section>
     <Section title="Dernières transactions" hint="Les huit opérations les plus récentes.">{recent.rows.length === 0 ? <div className="wk-panel">Aucune transaction récente.</div> : <TableWrap><thead><tr><Th>Date</Th><Th>Utilisateur</Th><Th>Type</Th><Th right>Montant</Th><Th>Statut</Th></tr></thead><tbody>{recent.rows.map((row) => <tr key={row.id}><Td label="Date">{formatDateTime(new Date(row.created_at))}</Td><Td label="Utilisateur"><div className="wk-asset">{nameOf.get(row.user_id) || "Sans pseudo"}</div><div className="wk-asset-sub">{shortId(row.user_id)}</div></Td><Td label="Type">{txTypeLabel(row.type)}</Td><Td right label="Montant">{formatNumber(Number(row.amount))} <span className="wk-asset-sub">{row.asset_symbol}</span></Td><Td label="Statut"><Pill tone={txStatusTone(row.status)}>{txStatusLabel(row.status)}</Pill></Td></tr>)}</tbody></TableWrap>}</Section>
   </div>;

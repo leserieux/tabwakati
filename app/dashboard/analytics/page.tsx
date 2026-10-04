@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, q } from "@/lib/data";
+import { getSupabaseAdmin, q, fetchAll, loadPrices } from "@/lib/data";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatPct, formatUsd } from "@/lib/format";
 import { ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -9,23 +9,23 @@ type User = { id: string; username: string; created_at: string | null; updated_a
 type Balance = { user_id: string; asset_symbol: string; available_balance: number | null; staking_balance: number | null; pending_balance: number | null };
 type Tx = { user_id: string; asset_symbol: string; type: string; amount: number | null; fee: number | null; status: string | null; created_at: string | null };
 type Price = { asset_symbol: string; price_usd: number | null };
-type Fee = { asset_symbol: string; amount: number | null; fee_type: string; collected_at: string | null };
+type Fee = { asset_symbol: string; amount: number | null; fee_type: string; collected_at: string | null; is_test?: boolean };
 type Risk = { user_id: string; score: number | null; level: string | null; calculated_at: string | null };
 
 const SUCCESS = ["completed", "succeeded", "success", "successful"];
 
 export default async function AnalyticsPage() {
   const db = getSupabaseAdmin();
-  const [users, balances, transactions, prices, fees, risks] = await Promise.all([
-    q<User>(db.from("users").select("id, username, created_at, updated_at")),
-    q<Balance>(db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance")),
-    q<Tx>(db.from("transactions").select("user_id, asset_symbol, type, amount, fee, status, created_at")),
-    q<Price>(db.from("asset_prices").select("asset_symbol, price_usd")),
-    q<Fee>(db.from("platform_fees").select("asset_symbol, amount, fee_type, collected_at")),
+  const [users, balances, transactions, priceMap, fees, risks] = await Promise.all([
+    fetchAll<User>((a, b) => db.from("users").select("id, username, created_at, updated_at").order("id").range(a, b)),
+    fetchAll<Balance>((a, b) => db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance").order("id").range(a, b)),
+    fetchAll<Tx>((a, b) => db.from("transactions").select("user_id, asset_symbol, type, amount, fee, status, created_at").order("id").range(a, b)),
+    loadPrices(),
+    fetchAll<Fee>((a, b) => db.from("platform_fees").select("asset_symbol, amount, fee_type, collected_at, is_test").order("id").range(a, b)),
     q<Risk>(db.from("user_risk_score_history").select("user_id, score, level, calculated_at").order("calculated_at", { ascending: false })),
   ]);
 
-  const price = new Map(prices.rows.map((row) => [row.asset_symbol, Number(row.price_usd || 0)]));
+  const price = priceMap;
   const latestRisk = new Map<string, Risk>();
   for (const row of risks.rows) if (!latestRisk.has(row.user_id)) latestRisk.set(row.user_id, row);
 
@@ -38,10 +38,10 @@ export default async function AnalyticsPage() {
   const successful = transactions.rows.filter((row) => SUCCESS.includes(String(row.status)));
   const deposits = successful.filter((row) => row.type === "deposit").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
   const withdrawals = successful.filter((row) => row.type === "withdrawal").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
-  const feesTotal = fees.rows.reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
+  const feesTotal = fees.rows.filter((row: any) => !row.is_test && row.fee_type !== "game_net_loss").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
   const active = new Set(successful.filter((row) => row.created_at && Date.now() - new Date(row.created_at).getTime() <= 30 * 86400000).map((row) => row.user_id));
   const risky = [...latestRisk.values()].filter((row) => Number(row.score || 0) >= 50 || ["high", "critical"].includes(String(row.level || "").toLowerCase())).length;
-  const errors = [users.error, balances.error, transactions.error, prices.error, fees.error, risks.error].filter(Boolean).join(" · ");
+  const errors = [users.error, balances.error, transactions.error, fees.error, risks.error].filter(Boolean).join(" · ");
   const topUsers = users.rows.map((user) => ({ user, value: currentByUser.get(user.id) || 0 })).sort((a, b) => b.value - a.value).slice(0, 25);
 
   return (

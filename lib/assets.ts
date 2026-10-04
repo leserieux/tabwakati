@@ -1,5 +1,4 @@
-import { getSupabaseAdmin, q } from "@/lib/data";
-import { isValidPrice } from "@/lib/valuation";
+import { getSupabaseAdmin, q, fetchAll, loadPrices } from "@/lib/data";
 
 export type UserAssetSummary = {
   asset: string;
@@ -18,13 +17,11 @@ export type UserAssetSummary = {
  */
 export async function loadUserAssetSummaries(): Promise<{ rows: UserAssetSummary[]; error?: string }> {
   const db = getSupabaseAdmin();
-  const [assets, balances, prices] = await Promise.all([
+  const [assets, balances, priceOf] = await Promise.all([
     q<{ symbol: string }>(db.from("supported_assets").select("symbol").eq("is_active", true)),
-    q<any>(db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance")),
-    q<any>(db.from("asset_prices").select("asset_symbol, price_usd"))
+    fetchAll<any>((from, to) => db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance").order("id").range(from, to)),
+    loadPrices()
   ]);
-
-  const priceOf = new Map(prices.rows.filter((row) => isValidPrice(Number(row.price_usd))).map((row) => [String(row.asset_symbol), Number(row.price_usd)]));
   const byAsset = new Map<string, UserAssetSummary>();
 
   for (const asset of assets.rows) {
@@ -57,6 +54,6 @@ export async function loadUserAssetSummaries(): Promise<{ rows: UserAssetSummary
     valueUsd: row.priceUsd === null ? null : row.total * row.priceUsd
   })).filter((row) => row.total > 0 || row.users > 0).sort((a, b) => a.asset.localeCompare(b.asset));
 
-  const error = [assets.error, balances.error, prices.error].filter(Boolean).join(" · ") || undefined;
+  const error = [assets.error, balances.error].filter(Boolean).join(" · ") || undefined;
   return { rows, error };
 }

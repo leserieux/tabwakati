@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, q } from "@/lib/data";
+import { getSupabaseAdmin, q, loadPriceRows } from "@/lib/data";
 import { SUCCESS_STATUSES } from "@/lib/transactions";
 
 export type UserPerformanceRow = {
@@ -93,12 +93,10 @@ export async function loadUserPerformance(userId: string): Promise<{ rows: UserP
         .eq("user_id", userId)
         .in("status", SUCCESS_STATUSES)
     ),
-    q<{ asset_symbol: string; price_usd: number | null }>(db.from("asset_prices").select("asset_symbol, price_usd")),
+    loadPriceRows(),
   ]);
 
-  const priceOf = new Map(
-    prices.rows.map((row) => [String(row.asset_symbol), Number.isFinite(Number(row.price_usd)) ? Number(row.price_usd) : null])
-  );
+  const priceOf = new Map(prices.rows.map((row) => [row.asset_symbol, row.price_usd]));
   const map = new Map<string, UserPerformanceRow>();
 
   const get = (asset: string) => {

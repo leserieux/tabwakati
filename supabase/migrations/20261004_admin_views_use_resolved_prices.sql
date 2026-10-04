@@ -1,0 +1,5 @@
+-- Déjà appliquée sur le projet Supabase (wakatiapp) le 2026-10-04.
+-- admin_treasury_dashboard et admin_transactions_overview : jointure sur asset_prices_resolved au lieu de asset_prices
+-- (USDC-ETH / USDC-POL n'avaient aucun prix : valeur 0 $). Colonnes de sortie inchangées.
+-- Volontairement NON modifiées : v_active_loans_health (JOIN interne, peut servir au moteur de liquidation) et les vues
+-- de prêts/paris/roue (tous les actifs utilisés y ont le même nom que leur ledger_symbol : FCFA, MATIC, WAKATI).

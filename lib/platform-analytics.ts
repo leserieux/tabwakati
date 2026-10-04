@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, q } from "@/lib/data";
+import { getSupabaseAdmin, q, fetchAll } from "@/lib/data";
 import { SUCCESS_STATUSES } from "@/lib/transactions";
 
 export type PlatformCohortRow = {
@@ -26,8 +26,8 @@ function monthOf(value: string | null): string | null {
 export async function loadPlatformCohorts(): Promise<{ rows: PlatformCohortRow[]; error?: string }> {
   const db = getSupabaseAdmin();
   const [users, transactions] = await Promise.all([
-    q<UserRow>(db.from("users").select("id, created_at").order("created_at", { ascending: true })),
-    q<TransactionRow>(db.from("transactions").select("user_id, type, amount, fee, status, created_at").in("status", SUCCESS_STATUSES)),
+    fetchAll<UserRow>((a, b) => db.from("users").select("id, created_at").order("id").range(a, b)),
+    fetchAll<TransactionRow>((a, b) => db.from("transactions").select("user_id, type, amount, fee, status, created_at").in("status", SUCCESS_STATUSES).order("id").range(a, b)),
   ]);
 
   const cohorts = new Map<string, { users: Set<string>; depositorIds: Set<string>; deposits: number; withdrawals: number; fees: number; activeIds: Set<string> }>();

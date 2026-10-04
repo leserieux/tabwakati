@@ -179,7 +179,7 @@ export default async function UserDetailPage({ params, searchParams }: { params:
         <div className="wk-grid-2">
           <div className="wk-panel">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              <Pill tone={user.is_verified ? "ok" : "warn"}>{user.is_verified ? "Vérifié" : "Non vérifié"}</Pill>
+              <Pill tone={user.is_verified || kycRow?.verification_status === "verified" ? "ok" : "info"}>{user.is_verified || kycRow?.verification_status === "verified" ? "KYC vérifié" : kycRow ? `KYC : ${kycRow.verification_status}` : "KYC non soumis"}</Pill>
               <Pill tone={user.email_confirmed ? "ok" : "info"}>{user.email_confirmed ? "Email validé" : "Email non validé"}</Pill>
               <Pill tone={user.profile_completed ? "ok" : "warn"}>{user.profile_completed ? "Profil complet" : "Profil incomplet"}</Pill>
             </div>

@@ -13,7 +13,8 @@ export const NAV: NavEntry[] = [
   { key: "treasury", label: "Trésorerie", icon: "shield", href: "/dashboard/treasury", tabs: [
     { href: "/dashboard/treasury", label: "Solvabilité" },
     { href: "/dashboard/liquidity", label: "Liquidité (swap)" },
-    { href: "/dashboard/sweep", label: "Balayage" }
+    { href: "/dashboard/sweep", label: "Balayage" },
+    { href: "/dashboard/fees", label: "Frais" }
   ] },
   { key: "markets", label: "Marchés & analytics", icon: "price", href: "/dashboard/markets", tabs: [
     { href: "/dashboard/markets", label: "Marchés" },

@@ -40,7 +40,7 @@ function formatDuration(ms: number): string {
 
 function maxAgeHours(coingeckoId: string | null, network: string): number {
   if (coingeckoId) return 3;
-  if (network === "Fiat") return 24 * 30;
+  if (network === "Fiat") return 48;
   return 36;
 }
 
@@ -50,7 +50,7 @@ async function computeSuggestions(): Promise<Suggestion[]> {
 
   const [assetsRes, pricesRes, flagsRes, addressesRes, minSweepRes, creditRes, wheelRes, kycCountRes] = await Promise.all([
     q<{ symbol: string; name: string; network: string; coingecko_id: string | null }>(db.from("supported_assets").select("symbol, name, network, coingecko_id").eq("is_active", true)),
-    q<{ asset_symbol: string; price_usd: number; updated_at: string }>(db.from("asset_prices").select("asset_symbol, price_usd, updated_at")),
+    q<{ asset_symbol: string; price_usd: number | null; updated_at: string | null }>(db.from("asset_prices_resolved").select("asset_symbol, price_usd, updated_at")),
     q<{ flag_type: string; severity: string }>(db.from("user_risk_flags").select("flag_type, severity").eq("status", "open")),
     q<{ id: string; asset_symbol: string; network: string; cached_balance: number }>(db.from("user_addresses").select("id, asset_symbol, network, cached_balance").eq("is_active", true).gt("cached_balance", 0)),
     q<{ symbol: string; network: string; min_sweep: number }>(db.from("supported_assets").select("symbol, network, min_sweep")),
@@ -64,9 +64,9 @@ async function computeSuggestions(): Promise<Suggestion[]> {
   for (const a of assetsRes.rows) {
     const p = priceBy.get(a.symbol);
     const limit = maxAgeHours(a.coingecko_id, a.network);
-    const ageHours = p ? (Date.now() - new Date(p.updated_at).getTime()) / 3600000 : null;
-    if (!p) {
-      suggestions.push({ key: `price:missing:${a.symbol}`, title: `Aucun cours pour ${a.symbol}`, description: `${a.name} n'a aucune ligne dans asset_prices : valorisé à 0$ partout dans le dashboard.`, category: "donnees", priority: "medium", href: "/dashboard/markets" });
+    const ageHours = p && p.updated_at ? (Date.now() - new Date(p.updated_at).getTime()) / 3600000 : null;
+    if (!p || p.updated_at === null) {
+      suggestions.push({ key: `price:missing:${a.symbol}`, title: `Aucun cours pour ${a.symbol}`, description: `${a.name} n'a aucun cours valide : il est exclu des valorisations USD du dashboard.`, category: "donnees", priority: "medium", href: "/dashboard/markets" });
     } else if (!(Number(p.price_usd) > 0)) {
       suggestions.push({ key: `price:zero:${a.symbol}`, title: `Cours à 0 pour ${a.symbol}`, description: `Le dernier cours enregistré est 0$, ce qui fausse toute valorisation USD de cet actif.`, category: "donnees", priority: "medium", href: "/dashboard/markets" });
     } else if (ageHours !== null && ageHours > limit) {

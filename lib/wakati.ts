@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { getSupabaseAdmin, q } from "@/lib/data";
+import { getSupabaseAdmin, q, fetchAll } from "@/lib/data";
 import { getTokenBalance, getTokenTotalSupply } from "@/lib/chain";
 
 export const EXPLORER = "https://polygonscan.com";
@@ -43,11 +43,11 @@ export const loadWakati = cache(async (): Promise<WakatiData> => {
 
   const [assetR, priceR, stateR, historyR, walletR, balancesR, poolR, flowsR] = await Promise.all([
     q<any>(db.from("supported_assets").select("contract_address, network, decimals, can_be_deposited, can_be_withdrawn, can_be_swapped, min_withdraw, max_withdraw").eq("symbol", "WAKATI").limit(1)),
-    q<any>(db.from("asset_prices").select("price_usd, change_24h").eq("asset_symbol", "WAKATI").limit(1)),
+    q<any>(db.from("asset_prices").select("price_usd, change_24h").eq("asset_symbol", "WAKATI")),
     q<any>(db.from("wakati_reserve_state").select("reserve_usd, profit_share_pct, max_daily_change_pct, price_floor_usd, is_active, last_computed_at").eq("id", 1).limit(1)),
     q<any>(db.from("wakati_price_history").select("computed_for_date, net_profit_usd, reserve_contribution_usd, reserve_usd_after, circulating_supply, raw_price_usd, final_price_usd, was_capped").order("computed_for_date", { ascending: false }).limit(30)),
     q<any>(db.from("treasury_wallets").select("balance, total_collected, total_withdrawn, total_burned").eq("asset_symbol", "WAKATI").limit(1)),
-    q<any>(db.from("user_balances").select("user_id, available_balance, staking_balance, pending_balance").eq("asset_symbol", "WAKATI")),
+    fetchAll<any>((a, b) => db.from("user_balances").select("user_id, available_balance, staking_balance, pending_balance").eq("asset_symbol", "WAKATI").order("id").range(a, b)),
     q<any>(db.from("admin_staking_overview").select("pool_name, apr, min_stake, total_staked, total_rewards_distributed, total_pending_rewards, active_stakers, is_active").eq("asset_symbol", "WAKATI").limit(1)),
     db.rpc("get_wakati_flows", { p_days: 30 })
   ]);
@@ -94,8 +94,23 @@ export const loadWakati = cache(async (): Promise<WakatiData> => {
     holders: holders.length
   };
 
-  const p = poolR.rows[0];
-  const pool = p ? { name: p.pool_name as string, apr: Number(p.apr), minStake: Number(p.min_stake), totalStaked: Number(p.total_staked), rewardsDistributed: Number(p.total_rewards_distributed), pendingRewards: Number(p.total_pending_rewards), stakers: Number(p.active_stakers), isActive: !!p.is_active } : null;
+  // Tous les pools WAKATI sont agrégés (un seul affiché avant : le total staké était sous-estimé s'il y en avait plusieurs).
+  const pools = poolR.rows;
+  const sum = (key: string) => pools.reduce((acc: number, r: any) => acc + Number(r[key] || 0), 0);
+  const stakedTotal = sum("total_staked");
+  const weightedApr = stakedTotal > 0
+    ? pools.reduce((acc: number, r: any) => acc + Number(r.apr || 0) * Number(r.total_staked || 0), 0) / stakedTotal
+    : Math.max(0, ...pools.map((r: any) => Number(r.apr || 0)));
+  const pool = pools.length ? {
+    name: pools.length === 1 ? String(pools[0].pool_name) : `${pools.length} pools`,
+    apr: weightedApr,
+    minStake: Math.min(...pools.map((r: any) => Number(r.min_stake || 0))),
+    totalStaked: stakedTotal,
+    rewardsDistributed: sum("total_rewards_distributed"),
+    pendingRewards: sum("total_pending_rewards"),
+    stakers: sum("active_stakers"),
+    isActive: pools.some((r: any) => !!r.is_active)
+  } : null;
 
   const fl: any = flowsR.data || { tx: [], fees: [], days: 30 };
   const flows = {
@@ -151,7 +166,7 @@ export interface WakatiInApp {
 export const loadWakatiInApp = cache(async (): Promise<WakatiInApp> => {
   const db = getSupabaseAdmin();
   const [bal, wal, price] = await Promise.all([
-    q<any>(db.from("user_balances").select("available_balance, staking_balance, pending_balance").eq("asset_symbol", "WAKATI")),
+    fetchAll<any>((a, b) => db.from("user_balances").select("available_balance, staking_balance, pending_balance").eq("asset_symbol", "WAKATI").order("id").range(a, b)),
     q<any>(db.from("treasury_wallets").select("balance").eq("asset_symbol", "WAKATI").limit(1)),
     q<any>(db.from("asset_prices").select("price_usd").eq("asset_symbol", "WAKATI").limit(1))
   ]);

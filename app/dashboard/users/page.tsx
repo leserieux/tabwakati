@@ -1,4 +1,4 @@
-import { getSupabaseAdmin, q } from "@/lib/data";
+import { getSupabaseAdmin, q, fetchAll } from "@/lib/data";
 import { loadUserAssetSummaries } from "@/lib/assets";
 import { formatCompactNumber, formatDateTime, shortId } from "@/lib/format";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
@@ -37,10 +37,17 @@ export default async function UsersPage({ searchParams }: { searchParams: { q?: 
     .range(from, to);
   if (term) query = query.or(`username.ilike.%${term}%,email.ilike.%${term}%`);
 
-  const [usersRes, balances, assets] = await Promise.all([
+  const since7dIso = new Date(Date.now() - 7 * DAY).toISOString();
+  const [usersRes, balances, assets, allUsers, new7dRes, emailRes, kycRes, activeTx] = await Promise.all([
     query,
-    q<BalanceRow>(db.from("user_balances").select("user_id, available_balance, staking_balance, pending_balance")),
-    loadUserAssetSummaries()
+    fetchAll<BalanceRow>((a, b) => db.from("user_balances").select("user_id, available_balance, staking_balance, pending_balance").order("id").range(a, b)),
+    loadUserAssetSummaries(),
+    // Indicateurs GLOBAUX : indépendants de la page affichée et de la recherche.
+    db.from("users").select("id", { count: "exact", head: true }),
+    db.from("users").select("id", { count: "exact", head: true }).gte("created_at", since7dIso),
+    db.from("users").select("id", { count: "exact", head: true }).eq("email_confirmed", true),
+    db.from("user_kyc").select("user_id", { count: "exact", head: true }),
+    fetchAll<{ user_id: string }>((a, b) => db.from("transactions").select("user_id").gte("created_at", since7dIso).order("id").range(a, b))
   ]);
 
   const rows = (usersRes.data || []) as UserRow[];
@@ -52,10 +59,11 @@ export default async function UsersPage({ searchParams }: { searchParams: { q?: 
   }
 
   const now = Date.now();
-  const since7d = new Date(now - 7 * DAY).toISOString();
-  const active7d = rows.filter((u) => u.updated_at && u.updated_at >= since7d).length;
-  const verified = rows.filter((u) => u.is_verified).length;
-  const new7d = rows.filter((u) => u.created_at && u.created_at >= since7d).length;
+  const globalTotal = allUsers.count ?? total;
+  const active7d = new Set(activeTx.rows.map((r) => r.user_id).filter(Boolean)).size;
+  const new7d = new7dRes.count ?? 0;
+  const emailConfirmed = emailRes.count ?? 0;
+  const kycCount = kycRes.count ?? 0;
 
   function pageHref(nextPage: number) {
     const params = new URLSearchParams();
@@ -68,13 +76,13 @@ export default async function UsersPage({ searchParams }: { searchParams: { q?: 
   return (
     <div>
       <PageHeader title="Utilisateurs" subtitle="Comptes, vérification et soldes multi-actifs de la plateforme." updatedAt={formatDateTime(new Date())} />
-      <ErrorNote text={usersRes.error || balances.error || assets.error ? `Certaines données sont indisponibles : ${[usersRes.error, balances.error, assets.error].filter(Boolean).join(" · ")}` : null} />
+      <ErrorNote text={usersRes.error || balances.error || assets.error ? `Certaines données sont indisponibles : ${[usersRes.error?.message, balances.error, assets.error].filter(Boolean).join(" · ")}` : null} />
 
       <div className="wk-strip">
-        <StatCard label="Total comptes" value={formatCompactNumber(total)} sub="Depuis public.users" />
-        <StatCard label="Actifs 7j" value={formatCompactNumber(active7d)} sub="Selon updated_at" />
+        <StatCard label="Total comptes" value={formatCompactNumber(globalTotal)} sub={term ? `${total} résultat(s) pour cette recherche` : "Tous les comptes"} />
+        <StatCard label="Actifs 7j" value={formatCompactNumber(active7d)} sub="Au moins une transaction" />
         <StatCard label="Nouveaux 7j" value={formatCompactNumber(new7d)} sub="Comptes créés" />
-        <StatCard label="Vérifiés" value={formatCompactNumber(verified)} sub={`${assets.rows.length} actif(s) configuré(s)`} />
+        <StatCard label="Email confirmé" value={formatCompactNumber(emailConfirmed)} sub={`KYC : ${kycCount} dossier(s)`} />
       </div>
 
       <Section title="Recherche">
