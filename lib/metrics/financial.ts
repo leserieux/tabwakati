@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, fetchAll, loadPrices, q } from "@/lib/data";
 import { isValidPrice } from "./pricing";
+import { FEE_TYPE_EXCLUSION_FILTER } from "./rules";
 import type { FinancialMetrics, FinancialCategoryKey } from "./types";
 
 const DAY = 86_400_000;
@@ -37,7 +38,7 @@ function emptyTotals() {
   (Object.keys(CATS) as CatKey[]).forEach((k) => {
     byCat[k] = { usd: 0, real: 0, wakati: 0, count: 0, native: new Map<string, number>() };
   });
-  return { byCat, realTotal: 0, wakatiTotal: 0, netTotal: 0, gameBets: 0, gameWins: 0, gameNet: 0, gameRtp: null };
+  return { byCat, realTotal: 0, wakatiTotal: 0, netTotal: 0, gameBets: 0, gameWins: 0, gameNet: 0, gameRtp: null as number | null };
 }
 
 function aggregate(events: Event[], from: number, to: number) {
@@ -69,7 +70,8 @@ function aggregate(events: Event[], from: number, to: number) {
 export async function loadFinancialMetrics(options: { period?: number } = {}): Promise<FinancialMetrics> {
   const db = getSupabaseAdmin();
   const now = Date.now();
-  const period = options.period || 30;
+  // Attention : 0 = « depuis le début » ; ne pas utiliser || ici.
+  const period = options.period ?? 30;
   const horizon = new Date(now - 400 * DAY).toISOString();
   const txTypes = Object.keys(TX_CAT);
 
@@ -89,7 +91,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
         .from("platform_fees")
         .select("asset_symbol, amount, collected_at")
         .eq("is_test", false)
-        .not("fee_type", "in", "(game_house_edge,game_net_loss)")
+        .not("fee_type", "in", FEE_TYPE_EXCLUSION_FILTER)
         .gte("collected_at", horizon)
         .order("id")
         .range(a, b)
@@ -140,7 +142,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
   const previous = period > 0 ? aggregate(events, start - period * DAY, start) : null;
 
   // Mensuel : 12 derniers mois
-  const monthlyBreakdown = [];
+  const monthlyBreakdown: FinancialMetrics["monthlyBreakdown"] = [];
   const base = new Date(now);
   for (let i = 0; i < 12; i++) {
     const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - i, 1));
@@ -167,33 +169,39 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1));
   const treasuryUsd = treasury.reduce((s, w) => s + (w.usd ?? 0), 0);
 
-  // Signaux de décision
+  // Signaux de décision (projections toujours sur les 30 derniers jours)
   const last30 = aggregate(events, now - 30 * DAY, end);
-  const signals: Array<{ tone: "ok" | "warn" | "bad" | "info"; title: string; detail: string }> = [];
+  const signals: FinancialMetrics["signals"] = [];
   const f = (n: number) => `${n < 0 ? "-" : ""}${Math.abs(n).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 
   if (current.gameBets > 0 && current.gameRtp !== null) {
     const verb = current.gameNet >= 0 ? "rapportent" : "coûtent";
-    const tone: any = current.gameRtp > 100 ? "bad" : current.gameRtp >= 90 ? "warn" : "ok";
+    const tone: FinancialMetrics["signals"][number]["tone"] = current.gameRtp > 100 ? "bad" : current.gameRtp >= 90 ? "warn" : "ok";
+    const advice =
+      current.gameRtp > 100
+        ? "Les gains dépassent les mises : revoyez les segments de la roue, les tours gratuits ou le coût du tour."
+        : current.gameRtp >= 90
+          ? "La marge est mince : un coup de chance côté joueurs suffit à passer en perte."
+          : "Marge confortable.";
     signals.push({
       tone,
       title: `Jeux : les joueurs récupèrent ${current.gameRtp.toFixed(0)} % des mises`,
-      detail: `Sur la période, les jeux ${verb} ${f(Math.abs(current.gameNet))} (${f(current.gameBets)} misés, ${f(current.gameWins)} gagnés)`,
+      detail: `Sur la période, les jeux ${verb} ${f(Math.abs(current.gameNet))} (${f(current.gameBets)} misés, ${f(current.gameWins)} payés). ${advice}`,
     });
   }
 
-  if (current.realTotal > 0.005 || current.wakatiTotal > 0.005 || current.realTotal < -0.005 || current.wakatiTotal < -0.005) {
+  if (Math.abs(current.realTotal) > 0.005 || Math.abs(current.wakatiTotal) > 0.005) {
     if (current.netTotal > 0 && current.realTotal <= 0) {
       signals.push({
         tone: "warn",
         title: "Votre bénéfice est en WAKATI, pas en argent réel",
-        detail: `Résultat en actifs réels (FCFA, crypto) : ${f(current.realTotal)}. Résultat en WAKATI : ${f(current.wakatiTotal)}.`,
+        detail: `Résultat en actifs réels (FCFA, crypto) : ${f(current.realTotal)}. Résultat en WAKATI : ${f(current.wakatiTotal)}. Le WAKATI est le jeton de l'app : il ne paie pas vos frais ni vos retraits.`,
       });
     } else if (current.realTotal > 0) {
       signals.push({
         tone: "ok",
         title: `Argent réel : ${f(current.realTotal)} sur la période`,
-        detail: `Résultat en WAKATI : ${f(current.wakatiTotal)}. Le résultat réel est ce qui compte le plus.`,
+        detail: `Résultat en WAKATI : ${f(current.wakatiTotal)}. Le résultat réel est celui qui compte pour vos dépenses.`,
       });
     } else {
       signals.push({
@@ -214,7 +222,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     signals.push({
       tone: yearlyUsd > yearlyFees && yearlyFees > 0 ? "warn" : "info",
       title: `Staking : environ ${Math.round(yearlyWakati).toLocaleString("fr-FR")} WAKATI de récompenses par an`,
-      detail: `Soit environ ${f(yearlyUsd)} par an. Frais annualisés : ${f(yearlyFees)}.`,
+      detail: `${Math.round(staked).toLocaleString("fr-FR")} WAKATI stakés à ${apr.toFixed(1)} % ≈ ${f(yearlyUsd)} par an au cours actuel, contre environ ${f(yearlyFees)} par an de frais au rythme des 30 derniers jours.`,
     });
   }
 
@@ -224,7 +232,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
       signals.push({
         tone: "warn",
         title: `Le WAKATI est ${drop.toFixed(0)} % sous son pic récent`,
-        detail: `Cours actuel ${wakatiNow.toFixed(5)} $ contre ${wakatiPeak.toFixed(5)} $ au pic.`,
+        detail: `Cours actuel ${wakatiNow.toFixed(5)} $ contre ${wakatiPeak.toFixed(5)} $ au plus haut des 31 derniers jours. Tous les montants en WAKATI valent moins en dollars : lisez aussi les montants natifs.`,
       });
     }
   }
@@ -233,7 +241,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     signals.push({
       tone: "info",
       title: `${current.byCat.defaults.count} prêt(s) score en défaut sur la période`,
-      detail: `Montant non remboursé : ${f(-current.byCat.defaults.usd)}.`,
+      detail: `Montant non remboursé : ${f(-current.byCat.defaults.usd)}. Les prêts liquidés ne sont pas dans ce total.`,
     });
   }
 
@@ -244,7 +252,7 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     signals.push({
       tone: days < 365 ? "warn" : "ok",
       title: days < 365 ? `Trésorerie WAKATI : environ ${Math.round(days)} jours de réserve` : "Trésorerie WAKATI : plus d'un an de réserve",
-      detail: `Solde actuel : ${tw.balance.toFixed(2)} WAKATI.`,
+      detail: `Au rythme des 30 derniers jours (${Math.round(-wakatiIn).toLocaleString("fr-FR")} WAKATI sortis nets), la trésorerie de ${Math.round(tw.balance).toLocaleString("fr-FR")} WAKATI est suffisante pour ${days < 365 ? `environ ${Math.round(days)} jours` : "plus d'un an"}.`,
     });
   }
 
@@ -269,6 +277,8 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     deltaPrevious: previous ? current.netTotal - previous.netTotal : null,
     monthlyBreakdown,
     signals,
+    treasury,
+    treasuryUsd,
     unpriced: [...unpriced],
     wakatiPrice: wakatiNow,
     wakatiPeak,

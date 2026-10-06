@@ -134,7 +134,7 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
         <p className="wk-hint">« Coûts » = staking + parrainage + prêts en défaut.</p>
       </Section>
 
-      <Section title="Trésorerie actuelle" hint={`Soldes des portefeuilles de la plateforme, au cours actuel. Total : ${formatUsd(r.treasury.reduce((s, w) => s + (w.usd ?? 0), 0))}.`}>
+      <Section title="Trésorerie actuelle" hint={`Soldes des portefeuilles de la plateforme, au cours actuel. Total : ${formatUsd(r.treasuryUsd)}.`}>
         <TableWrap>
           <thead><tr><Th>Actif</Th><Th right>Solde</Th><Th right hideSm>Cours</Th><Th right>Valeur</Th></tr></thead>
           <tbody>

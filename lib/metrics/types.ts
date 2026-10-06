@@ -60,6 +60,16 @@ export interface RiskMetrics {
   }>;
 }
 
+export interface RecentTransaction {
+  id: string;
+  userId: string;
+  type: string;
+  asset: string;
+  amount: number;
+  status: string | null;
+  createdAt: string;                  // ISO timestamp
+}
+
 export interface OverviewMetrics {
   timestamp: string;
   users: UserMetrics;
@@ -67,6 +77,9 @@ export interface OverviewMetrics {
   volume: VolumeMetrics;
   fees: FeesMetrics;
   risk: RiskMetrics;
+  assets: UserAssetMetrics[];         // Soldes utilisateurs par actif
+  activeAssetCount: number;           // Actifs actifs dans supported_assets
+  recentTransactions: RecentTransaction[]; // 8 dernières opérations
   errors?: string;
 }
 
@@ -122,6 +135,9 @@ export interface FinancialMetrics {
     title: string;
     detail: string;
   }>;
+  // Trésorerie actuelle (soldes des portefeuilles de la plateforme, cours actuel)
+  treasury: Array<{ asset: string; balance: number; price: number | null; usd: number | null }>;
+  treasuryUsd: number;
   // État
   unpriced: string[];
   wakatiPrice: number | null;
@@ -155,6 +171,8 @@ export interface AssetsMetrics {
   treasury: TreasuryAssetMetrics[];
   treasuryTotalUsd: number;           // Somme valueUsd
   unpriced: string[];
+  activeAssetCount: number;           // Actifs actifs dans supported_assets
+  truncated?: boolean;
   error?: string;
 }
 
@@ -163,7 +181,7 @@ export interface UserRiskScore {
   userId: string;
   username: string;
   score: number | null;               // 0-100
-  level: "low" | "medium" | "high" | "critical" | null;
+  level: "normal" | "watch" | "high" | "critical" | null; // valeurs de user_risk_score_history.level
   lastCalculated: string | null;      // ISO timestamp
 }
 
@@ -180,18 +198,22 @@ export interface AnalyticsMetrics {
     total: number;
     active30d: number;
     withBalances: number;
+    totalValueUsd: number;            // Somme des soldes utilisateurs valorisés (actif par actif)
     atRisk: number;                   // score >= 50
   };
   cashflow: {
     depositsUsd: number;              // Transactions réussies
     withdrawalsUsd: number;
     netUsd: number;
+    successfulCount: number;          // Nombre de transactions réussies (tous types)
   };
   fees: {
     totalUsd: number;
-    fromPlatformFeesTable: number;    // Exactement depuis platform_fees (hors test, hors game_net_loss)
+    fromPlatformFeesTable: number;    // Exactement depuis platform_fees (hors test, hors game_house_edge, hors game_net_loss)
   };
   topUsers: TopUser[];                // Top 25 par valeur
+  unpriced: string[];                 // Actifs sans prix valide : exclus des montants USD
+  truncated?: boolean;
   errors?: string;
 }
 

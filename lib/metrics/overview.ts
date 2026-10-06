@@ -1,7 +1,8 @@
-import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
-import { loadPnl } from "@/lib/pnl";
+import { fetchAll, getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { computeCoverage, isValidPrice } from "./pricing";
-import type { FeesMetrics, LiquidityMetrics, OverviewMetrics, RiskMetrics, UserMetrics, VolumeMetrics } from "./types";
+import { loadAssetsMetrics } from "./assets";
+import { loadFeeTotalsByAsset } from "./fees";
+import type { FeesMetrics, LiquidityMetrics, OverviewMetrics, RecentTransaction, RiskMetrics, UserMetrics, VolumeMetrics } from "./types";
 
 const DAY = 24 * 60 * 60 * 1000;
 const EPS = 0.00000001;
@@ -20,11 +21,6 @@ function makeDays(now: number): DayBucket[] {
   });
 }
 
-function normalizeNumber(value: unknown): number {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
 export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
   const db = getSupabaseAdmin();
   const now = Date.now();
@@ -33,26 +29,24 @@ export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
   const days = makeDays(now);
   const stuckBefore = new Date(now - 3600 * 1000).toISOString();
 
-  const [users, volume, loans, recent, wallets, liabilities, assets, recon, fees, pending, failed, prices, stuck, sweepFails, paused, pnl30] = await Promise.all([
-    q<any>(db.from("admin_users_overview").select("id, username, created_at, last_activity_at")),
+  // Les prix sont chargés une seule fois et partagés avec la couche « actifs ».
+  const pricesPromise = loadPrices();
+
+  const [users, volume, loans, recent, liabilities, assetsM, recon, fees, pending, failed, prices, stuck, emailConfirmed, kycApproved] = await Promise.all([
+    fetchAll<any>((a, b) => db.from("admin_users_overview").select("id, username, created_at, last_activity_at").order("id").range(a, b)),
     db.rpc("admin_volume_daily", { p_days: 7 }),
     q<{ loans_a_risque: number; score_loans_a_risque: number }>(db.from("admin_credit_summary").select("loans_a_risque, score_loans_a_risque")),
     q<any>(db.from("transactions").select("id, user_id, type, asset_symbol, amount, status, created_at").order("created_at", { ascending: false }).limit(8)),
-    q<any>(db.from("treasury_wallets").select("asset_symbol, balance")),
     q<any>(db.rpc("get_asset_liabilities")),
-    (async () => {
-      const { rows, error } = await q<any>(db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance"));
-      return { rows, error };
-    })(),
+    pricesPromise.then((p) => loadAssetsMetrics(p)),
     db.rpc("get_admin_reconciliation"),
-    db.rpc("get_platform_fees_totals"),
+    loadFeeTotalsByAsset(),
     db.from("transactions").select("id", { count: "exact", head: true }).in("status", ["pending", "processing"]),
     db.from("transactions").select("id", { count: "exact", head: true }).eq("status", "failed").gte("created_at", since24h),
-    loadPrices(),
+    pricesPromise,
     db.from("transactions").select("id", { count: "exact", head: true }).in("status", ["pending", "processing"]).lt("created_at", stuckBefore),
-    db.from("sweep_log").select("id", { count: "exact", head: true }).neq("status", "swept").eq("dry_run", false).gte("created_at", since7d),
-    q<any>(db.from("supported_assets").select("symbol").eq("can_be_deposited", false)),
-    loadPnl(30).catch(() => null),
+    db.from("users").select("id", { count: "exact", head: true }).eq("email_confirmed", true),
+    db.from("user_kyc").select("user_id", { count: "exact", head: true }).eq("verification_status", "approved"),
   ]);
 
   const volumeRows = ((volume.data as any[]) || []) as any[];
@@ -70,27 +64,29 @@ export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
   }
 
   const totalUsers = users.rows.length;
-  const activeUsers7d = users.rows.filter((u) => u.last_activity_at && u.last_activity_at >= since7d).length;
-  const newUsers7d = users.rows.filter((u) => u.created_at && u.created_at >= since7d).length;
+  const activeUsers7d = users.rows.filter((u: any) => u.last_activity_at && u.last_activity_at >= since7d).length;
+  const newUsers7d = users.rows.filter((u: any) => u.created_at && u.created_at >= since7d).length;
 
-  const walletByAsset = new Map(wallets.rows.map((row: any) => [String(row.asset_symbol), Number(row.balance || 0)]));
-  const liabByAsset = new Map(liabilities.rows.map((row: any) => [String(row.asset_symbol), Number(row.total_liability || 0)]));
-  const allSymbols = [...new Set([...walletByAsset.keys(), ...liabByAsset.keys()])];
+  // Couverture : détenu (trésorerie) vs dû (passifs), actif par actif.
+  const walletByAsset = new Map<string, number>(assetsM.treasury.map((t: { asset: string; balanceNative: number }): [string, number] => [t.asset, t.balanceNative]));
+  const liabByAsset = new Map<string, number>(liabilities.rows.map((row: any): [string, number] => [String(row.asset_symbol), Number(row.total_liability || 0)]));
+  const allSymbols: string[] = [...new Set<string>([...walletByAsset.keys(), ...liabByAsset.keys()])];
   const cov = computeCoverage(
     allSymbols.map((asset) => ({
       asset,
-      owed: liabByAsset.get(asset) || 0,
-      held: walletByAsset.get(asset) || 0,
+      owed: liabByAsset.get(asset) ?? 0,
+      held: walletByAsset.get(asset) ?? 0,
       price: prices.get(asset) ?? null,
     }))
   );
 
-  const feeRows = (((fees.data as any[]) || []) as any[]).map((row) => {
-    const asset = String(row.asset_symbol);
-    const total = Number(row.total_fees || 0);
-    const price = prices.get(asset) ?? null;
-    return { asset, total, usd: isValidPrice(price) ? total * price : null };
-  }).sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1));
+  // Frais : règle unique (hors test, hors game_house_edge, hors game_net_loss), cf. ./rules.
+  const feeRows = [...fees.totals.entries()]
+    .map(([asset, total]) => {
+      const price = prices.get(asset) ?? null;
+      return { asset, total, usd: isValidPrice(price) ? total * price : null };
+    })
+    .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1));
 
   const feesMetrics: FeesMetrics = {
     totalUsd: feeRows.reduce((sum, row) => sum + (row.usd ?? 0), 0),
@@ -115,6 +111,7 @@ export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
     unpriced: cov.unpriced,
   };
 
+  const reconRows = ((recon.data as any[]) || []) as any[];
   const riskMetrics: RiskMetrics = {
     loansAtRisk: (() => {
       const creditSummary = loans.rows[0];
@@ -123,27 +120,49 @@ export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
     pendingTransactions: pending.count || 0,
     stuckTransactions: stuck.count || 0,
     failedTransactions24h: failed.count || 0,
-    negativeBalances: ((recon.data as any[]) || []).filter((row) => Number(row.negative_rows || 0) > 0).map((row) => ({
-      asset: String(row.asset_symbol),
-      count: Number(row.negative_rows || 0),
-    })),
-    reconciliationIssues: ((recon.data as any[]) || []).filter((row) => Math.abs(Number(row.liability_diff || 0)) > EPS || Math.abs(Number(row.staking_orphan || 0)) > EPS).map((row) => ({
-      asset: String(row.asset_symbol),
-      liabilityDiff: Number(row.liability_diff || 0),
-      negativeBal: Number(row.negative_rows || 0),
-      stakingOrphan: Number(row.staking_orphan || 0),
-    })),
+    negativeBalances: reconRows
+      .filter((row) => Number(row.negative_rows || 0) > 0)
+      .map((row) => ({ asset: String(row.asset_symbol), count: Number(row.negative_rows || 0) })),
+    reconciliationIssues: reconRows
+      .filter((row) => Math.abs(Number(row.liability_diff || 0)) > EPS || Math.abs(Number(row.staking_orphan || 0)) > EPS)
+      .map((row) => ({
+        asset: String(row.asset_symbol),
+        liabilityDiff: Number(row.liability_diff || 0),
+        negativeBal: Number(row.negative_rows || 0),
+        stakingOrphan: Number(row.staking_orphan || 0),
+      })),
   };
 
   const usersMetrics: UserMetrics = {
     totalUsers,
     activeUsers7d,
     newUsers7d,
-    emailConfirmed: 0,
-    kycCompleted: 0,
+    emailConfirmed: emailConfirmed.count ?? 0,
+    kycCompleted: kycApproved.count ?? 0,
   };
 
-  const queryErrors = [users.error, volume.error?.message, loans.error, recent.error, wallets.error, liabilities.error, assets.error, recon.error?.message, fees.error?.message].filter(Boolean).join(" · ");
+  const recentTransactions: RecentTransaction[] = recent.rows.map((r: any) => ({
+    id: String(r.id),
+    userId: String(r.user_id),
+    type: String(r.type),
+    asset: String(r.asset_symbol),
+    amount: Number(r.amount || 0),
+    status: r.status ?? null,
+    createdAt: String(r.created_at),
+  }));
+
+  const queryErrors = [
+    users.error,
+    volume.error?.message,
+    loans.error,
+    recent.error,
+    liabilities.error,
+    assetsM.error,
+    recon.error?.message,
+    fees.error,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return {
     timestamp: new Date().toISOString(),
@@ -152,10 +171,9 @@ export async function loadOverviewMetrics(): Promise<OverviewMetrics> {
     volume: volumeMetrics,
     fees: feesMetrics,
     risk: riskMetrics,
+    assets: assetsM.userAssets,
+    activeAssetCount: assetsM.activeAssetCount,
+    recentTransactions,
     errors: queryErrors || undefined,
   };
-}
-
-export async function loadOverviewMetricsLegacyCompatible() {
-  return loadOverviewMetrics();
 }

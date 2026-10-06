@@ -3,7 +3,7 @@ import { computeCoverage, isValidPrice, valueUsd, DAY_MS, lastDaysKeys } from "@
 export { computeCoverage, isValidPrice, valueUsd, DAY_MS, lastDaysKeys };
 
 export function sumUsd(values: Array<number | null | undefined>): number {
-  return values.reduce((total, value) => total + (isValidPrice(value) ? value : 0), 0);
+  return values.reduce<number>((total, value) => total + (isValidPrice(value) ? value : 0), 0);
 }
 
 export function normalizeMapValue(value: number | string | null | undefined): number {

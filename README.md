@@ -3,9 +3,9 @@
 
 ## État du Projet
 
-**Dernier commit :** Migration architecture métier centralisée  
-**Status :** En cours de validation  
-**Dernière mise à jour :** 2026-10-05
+**Dernier commit :** Migration architecture métier centralisée + correctifs du 2026-10-06  
+**Status :** Code corrigé, **à valider par un `npm run build`** (non exécuté dans l'environnement de correction : pas de réseau)  
+**Dernière mise à jour :** 2026-10-06
 
 ## ⚙️ Problème Initial
 
@@ -26,287 +26,106 @@ Centraliser **tous les KPI du dashboard** dans un module métier unique (`lib/me
 
 ---
 
-## 📋 Roadmap Complète & État d'Avancement
+## 📋 Roadmap & état d'avancement
 
-### Phase 1 : Base de la Couche Métrique ✅
+### Phase 1 : Base de la couche métrique ✅
+- [x] `lib/metrics/types.ts` — types de tous les KPI
+- [x] `lib/metrics/pricing.ts` — `isValidPrice`, `valueUsd`, `computeCoverage`, `sumUsd` (typage corrigé)
+- [x] `lib/metrics/query.ts` — pagination et prix
+- [x] `lib/metrics/rules.ts` — **nouveau** : règles partagées (types de frais exclus, filtre PostgREST)
+- [x] `lib/metrics/index.ts` — exporte **toute** la couche (il manquait `financial`, `analytics`, ce qui cassait le build de `/dashboard/pnl`)
 
-#### 1.1 Types centralisés (`lib/metrics/types.ts`) ✅
-- [x] Types pour tous les KPI
-- [x] Interfaces `OverviewMetrics`, `FinancialMetrics`, `AnalyticsMetrics`, `AssetsMetrics`
-- [x] Types unifiés pour toutes les pages
+### Phase 2 : Services métier ✅
+- [x] `overview.ts` — `loadOverviewMetrics()` ; renvoie aussi `assets`, `activeAssetCount`, `recentTransactions`; `emailConfirmed` et `kycCompleted` sont désormais réels ; lectures paginées (plus de plafond silencieux à 1000 lignes)
+- [x] `financial.ts` — `loadFinancialMetrics()` ; corrigé : période « Depuis le début » (0) n'était pas honorée (`|| 30`), `treasury` / `treasuryUsd` manquaient dans le retour, textes des signaux restaurés à l'identique de l'ancien `loadPnl`
+- [x] `analytics.ts` — `loadAnalyticsMetrics()` ; filtre de frais unifié, prix manquants listés (`unpriced`) au lieu d'être comptés à 0 $, historique de risque paginé
+- [x] `assets.ts` — **nouveau** : `loadAssetsMetrics()` (soldes utilisateurs + trésorerie, actif par actif)
+- [x] `fees.ts` — **nouveau** : `loadFeeTotalsByAsset()` (remplace la RPC `get_platform_fees_totals`)
 
-**Commit :** `99c382b1d80dd545464fb0f449936d4289abc6b2`
+### Phase 3 : Migration UI
+- [x] 3.1 `app/dashboard/page.tsx` — tableau « Actifs des utilisateurs », « Actifs suivis » et « Dernières transactions » **réalimentés** (ils étaient figés à vide / 0 après la première migration)
+- [x] 3.2 `app/dashboard/pnl/page.tsx` — sur `loadFinancialMetrics()`
+- [x] 3.3 `app/dashboard/analytics/page.tsx` — sur `loadAnalyticsMetrics()`
+- [~] 3.4 Autres pages
+  - [x] `users` et `markets` : lisent les soldes via `lib/assets.ts`, désormais un simple adaptateur de `loadAssetsMetrics()`
+  - [ ] `liquidity` et `treasury` : utilisent `lib/custody.ts` (on-chain) + calculs inline de couverture → à migrer vers `computeCoverage` / `loadAssetsMetrics().treasury`
+  - [ ] `credit` : calculs inline → à migrer vers `risk` de metrics
+  - [ ] `fees` : `lib/fees.ts` garde son propre filtre (volontaire : cette page détaille aussi `game_house_edge`)
+  - [ ] `games`, `wakati/*`, `users/[id]` : hors périmètre KPI pour l'instant
 
-#### 1.2 Pricing centralisé (`lib/metrics/pricing.ts`) ✅
-- [x] `isValidPrice()` — validation stricte des prix
-- [x] `valueUsd()` — conversion en USD avec validation
-- [x] `computeCoverage()` — calcul de couverture actif par actif
-- [x] `DAY_MS`, `lastDaysKeys()` — utilitaires de temps
-
-**Commit :** `818858d42e84e276e54b881320578feedd78f587`
-
-#### 1.3 Query layer (`lib/metrics/query.ts`) ✅
-- [x] `fetchPaged()` — pagination sécurisée Supabase
-- [x] `loadPriceMap()` — résolution centralisée des prix
-- [x] `loadUserAssetRows()` — lecture soldes utilisateurs
-- [x] `loadSupportedAssets()` — liste des actifs actifs
-
-**Commit :** `b44cf64f50198a6c17f1b5135364c149d8238c7b`
-
-#### 1.4 Export index (`lib/metrics/index.ts`) ✅
-- [x] Point d'entrée centralisé du module
-
-**Commit :** `a46a5b20d76bf27e9f11f6489ddf1c16ed03aef6`
-
----
-
-### Phase 2 : Services Métier ✅
-
-#### 2.1 Overview metrics (`lib/metrics/overview.ts`) ✅
-- [x] `loadOverviewMetrics()` — agrégation Vue d'ensemble
-  - [x] `users` : total, actifs 7d, nouveaux 7d
-  - [x] `liquidity` : heldUsd, owedUsd, coverage%, unpriced
-  - [x] `volume` : volume7d, volume24h, transactions, gameWagered
-  - [x] `fees` : totalUsd, byAsset, unpriced
-  - [x] `risk` : loansAtRisk, pending, stuck, failed, reconciliation issues
-
-**Commit :** `8964e04eeb2711f39286be01ae0883d8139ee910`
-
-#### 2.2 Financial metrics (`lib/metrics/financial.ts`) ✅
-- [x] `loadFinancialMetrics()` — P&L et décisions
-  - [x] `byCat` : fees, game_bets, game_wins, staking, referral, defaults
-  - [x] Séparation real / wakati / total
-  - [x] `monthlyBreakdown` : 12 derniers mois
-  - [x] `signals` : décisions automatiques
-  - [x] `treasury` : soldes actuels
-
-**Commit :** `9a48e03253a766c7269a30e5c051624d37ba1005`
-
-#### 2.3 Analytics metrics (`lib/metrics/analytics.ts`) ✅
-- [x] `loadAnalyticsMetrics()` — KPI utilisateurs
-  - [x] `cashflow` : deposits, withdrawals, net
-  - [x] `fees` : totalUsd, détail platform_fees
-  - [x] `users` : total, actifs 30d, atRisk
-  - [x] `topUsers` : top 25 par valeur
-
-**Commit :** `d680b71ab2721b1083da0135db6435d4984b69a6`
+### Phase 4 : Nettoyage & validation
+- [x] 4.1 `lib/pnl.ts` supprimé (remplacé par `financial.ts`, parité vérifiée ligne à ligne) ; `lib/assets.ts` réduit à un adaptateur déprécié
+- [ ] 4.2 **Validation des chiffres — à faire par vous** (voir checklist ci-dessous)
+- [ ] 4.3 Tests & documentation : commentaires de règles ajoutés dans `rules.ts`, `fees.ts`, `assets.ts`, `analytics.ts` ; tests unitaires non écrits
+- [ ] 4.4 Commit final après validation
 
 ---
 
-### Phase 3 : Migration UI ✅
+## 🔍 Règles métier centralisées
 
-#### 3.1 Overview page (`app/dashboard/page.tsx`) ✅
-- [x] Migration vers `loadOverviewMetrics()`
-- [x] Remplacement logique inline par service centralisé
-- [x] Affichage inchangé, source unifiée
+### Validation des prix
+Un prix est valide uniquement s'il est un nombre fini et `> 0` (`isValidPrice`). Sinon : valeur `null`, actif listé dans `unpriced`, **jamais compté à 0 $ en silence**.
 
-**Commit :** `d2ed9300b33e548882439169db35b8cf17a6f19f`
+### Couverture / trésorerie
+Jamais de mélange de quantités : calcul actif par actif, agrégation en USD via `computeCoverage()`. `coveredUsd = min(heldUsd, owedUsd)` par actif.
 
-#### 3.2 P&L page (`app/dashboard/pnl/page.tsx`) ⏳ **À FAIRE**
-- [ ] Migration vers `loadFinancialMetrics()`
-- [ ] Remplacement logique P&L par service
-- [ ] Alignement des signaux et périodes
+### Frais (règle unique : `lib/metrics/rules.ts`)
+Source : `platform_fees`. Exclus : `is_test = true`, `game_house_edge` (déjà dans les mises), `game_net_loss` (signal de crédit).
+> ⚠️ La fonction SQL `get_platform_fees_totals()` n'excluait que `game_net_loss`. Dans la base actuelle, `game_house_edge` pèse 33 533,75 (unités natives) sur 377 lignes : l'ancienne Vue d'ensemble affichait donc des frais gonflés par rapport au P&L. Le code ne l'utilise plus ; une migration **optionnelle** pour aligner la base est fournie : `supabase/migrations/20261006_OPTIONNEL_align_platform_fees_totals_with_kpi_rules.sql` (non appliquée).
 
-#### 3.3 Analytics page (`app/dashboard/analytics/page.tsx`) ⏳ **À FAIRE**
-- [ ] Migration vers `loadAnalyticsMetrics()`
-- [ ] Remplacement cashflow / fees / risques par service
-- [ ] Alignement top users
+### P&L / catégories
+`fees` (+), `game_bets` (+), `game_wins` (−), `staking` (−), `referral` (−), `defaults` (−). Séparation `real` (tout sauf WAKATI) / `wakati` / `total`.
 
-#### 3.4 Autres pages ⏳ **À FAIRE**
-- [ ] `app/dashboard/liquidity/page.tsx` — utiliser `liquidity` de metrics
-- [ ] `app/dashboard/credit/page.tsx` — utiliser `risk` de metrics
-- [ ] `app/dashboard/markets/page.tsx` — utiliser `fees` de metrics
-- [ ] autres pages dashboard
+### Volume / activité
+Volume réel = dépôts + retraits + swaps + transferts réussis, hors jeux (comptés dans `gamesWagered7d`). Fenêtre : 7 jours glissants UTC.
 
 ---
 
-### Phase 4 : Nettoyage & Validation ⏳ **À FAIRE**
+## 📁 Structure
 
-#### 4.1 Suppression des doublons ⏳
-- [ ] Retirer logique de `loadPnl()` si remplacée par `loadFinancialMetrics()`
-- [ ] Retirer logique de `loadUserAssetSummaries()` si remplacée par metrics
-- [ ] Vérifier qu'aucune page n'a de calcul inline restant
-
-#### 4.2 Validation des chiffres ⏳
-- [ ] Vérifier que tous les KPI affichés === ancienne version
-- [ ] Vérifier que pas d'alerte / warning nouvelles
-- [ ] Vérifier que pas de break visuel
-
-#### 4.3 Tests & Documentation ⏳
-- [ ] Documentation des règles métier dans les types
-- [ ] Commentaires explicites sur les filtres (is_test, game_net_loss, etc.)
-- [ ] Guide d'utilisation de la couche métrique pour les futures pages
-
-#### 4.4 Commit final ⏳
-- [ ] Tous les changements validés
-- [ ] README mis à jour
-
----
-
-## 🔍 Règles Métier Centralisées
-
-### Validation des Prix
-```typescript
-// Un prix est valide uniquement si :
-- typeof === "number"
-- Number.isFinite(p) === true
-- p > 0
-
-// Sinon : null, non valorisé, signalé en alerte
 ```
-
-### Couverture / Treasury
-```typescript
-// Jamais de mélange de quantités (actif par actif)
-// Agrégation en USD seulement via computeCoverage()
-// Règle : coveredUsd = min(heldUsd, owedUsd) par actif
-```
-
-### P&L / Catégories
-```typescript
-// Catégories strictes :
-- fees (entrée, +1) : hors jeux, hors test, hors game_net_loss
-- game_bets (entrée, +1) : mises joueurs
-- game_wins (sortie, -1) : gains payés
-- staking (sortie, -1) : récompenses
-- referral (sortie, -1) : bonus parrainage
-- defaults (sortie, -1) : prêts en défaut
-
-// Séparation :
-- real = tous actifs sauf WAKATI
-- wakati = WAKATI uniquement
-- total = real + wakati
-```
-
-### Volume / Activité
-```typescript
-// Volume réel = dépôts + retraits + swaps + transferts (réussis)
-// Exclut : jeux (comptés séparément en gamesWagered7d)
-// Fenêtre : 7 jours glissants (UTC)
-```
-
-### Fees / Commissions
-```typescript
-// Source : platform_fees table
-// Filtres : is_test=false, fee_type NOT IN (game_house_edge, game_net_loss)
-// Valorisation : prix actuel pour tous actifs, null si pas de prix
+lib/metrics/
+├── types.ts       contrats de données
+├── rules.ts       règles partagées (frais)
+├── pricing.ts     validation prix & conversion USD
+├── query.ts       requêtes Supabase / pagination
+├── fees.ts        frais par actif (règle unique)
+├── assets.ts      soldes utilisateurs + trésorerie par actif
+├── overview.ts    Vue d'ensemble
+├── financial.ts   P&L & trésorerie
+├── analytics.ts   KPI utilisateurs
+└── index.ts       export centralisé
+lib/assets.ts      ⚠️ adaptateur déprécié (users, markets)
 ```
 
 ---
 
-## 📁 Structure Finale
+## ✅ Prochaines étapes
 
-```
-lib/
-├── metrics/
-│   ├── types.ts           ✅ Contrats de données
-│   ├── pricing.ts         ✅ Validation & conversion USD
-│   ├── query.ts           ✅ Requêtes Supabase
-│   ├── overview.ts        ✅ Vue d'ensemble
-│   ├── financial.ts       ✅ P&L & trésorerie
-│   ├── analytics.ts       ✅ KPI utilisateurs
-│   ├── assets.ts          ⏳ À créer (soldes par actif)
-│   └── index.ts           ✅ Export centralisé
-├── pnl.ts                 ⚠️ À remplacer par financial.ts
-├── assets.ts              ⚠️ À remplacer par metrics/assets.ts
-├── valuation.ts           ✅ Réutilisé par metrics
-└── data.ts                ✅ Réutilisé par metrics
+### Immédiat — valider
+1. `npm install && npm run build` : aucune erreur TypeScript/runtime attendue. Si une erreur apparaît, elle est probablement locale (types Supabase) : corriger dans le fichier indiqué.
+2. Checklist 4.2 (comparer avec l'ancienne version) :
+   - `/dashboard` : « Actifs des utilisateurs » et « Dernières transactions » affichent des lignes ; « Actifs suivis » ≠ 0.
+   - `/dashboard` « Frais cumulés » **va baisser** (fin de l'inclusion de `game_house_edge`) : c'est attendu, et doit maintenant égaler la ligne « Frais » du P&L sur « Depuis le début ».
+   - `/dashboard/pnl?p=0` (« Depuis le début ») : doit maintenant réellement couvrir toute la période.
+   - `/dashboard/analytics` : les frais baissent pour la même raison ; une alerte liste les actifs sans prix.
+3. Appliquer (ou non) la migration SQL optionnelle.
 
-app/dashboard/
-├── page.tsx               ✅ Migré vers loadOverviewMetrics()
-├── pnl/page.tsx           ⏳ À migrer vers loadFinancialMetrics()
-├── analytics/page.tsx     ⏳ À migrer vers loadAnalyticsMetrics()
-└── ...autres pages        ⏳ À analyser & migrer
-```
+### Court / moyen terme
+4. Migrer `liquidity`, `treasury`, `credit` (voir 3.4), puis supprimer `lib/assets.ts` quand `users` et `markets` appelleront `loadAssetsMetrics()`.
+5. Écrire des tests unitaires sur `computeCoverage`, `aggregate` (financial) et `isCountedFee`.
 
 ---
 
-## ✅ Prochaines Étapes (Pour IA ou Développeur)
+## 📝 Changements du 2026-10-06
 
-### Immédiat
-1. **Valider la build** :
-   ```bash
-   npm install
-   npm run build
-   ```
-   Vérifier qu'aucune erreur TypeScript / runtime
+**Créés** : `lib/metrics/rules.ts`, `fees.ts`, `assets.ts`, migration SQL optionnelle.
+**Modifiés** : `lib/metrics/{index,types,pricing,overview,financial,analytics}.ts`, `lib/assets.ts` (adaptateur), `app/dashboard/{page,pnl/page,analytics/page}.tsx`, ce README.
+**Supprimés** : `lib/pnl.ts`.
+**Non modifiés** : `lib/valuation.ts`, `lib/data.ts`, `lib/format.ts`, `lib/fees.ts` (page Frais).
 
-2. **Tester le dashboard** :
-   - Aller sur `/dashboard`
-   - Vérifier que les chiffres sont affichés correctement
-   - Comparer avec l'ancienne version si possible
-
-### Court terme
-3. **Migrer P&L page** :
-   - Remplacer logique inline par `loadFinancialMetrics()`
-   - Vérifier que les chiffres === ancienne version
-   - Supprimer logique dupliquée
-
-4. **Migrer Analytics page** :
-   - Remplacer logique inline par `loadAnalyticsMetrics()`
-   - Vérifier cohérence
-
-### Moyen terme
-5. **Créer assets.ts** :
-   - Agrégations soldes par actif
-   - Couverture unifiée
-   - Réutiliser dans toutes les pages
-
-6. **Nettoyer les doublons** :
-   - Supprimer `lib/pnl.ts` si `financial.ts` le remplace
-   - Supprimer `lib/assets.ts` si `metrics/assets.ts` le remplace
-
-7. **Migrer autres pages** :
-   - liquidity, credit, markets, etc.
-   - Utiliser les services centralisés
-
-### Validation finale
-8. **Audit des KPI** :
-   - Vérifier que toutes les pages affichent les mêmes chiffres
-   - Pas de contradictions
-   - Alertes cohérentes
-
----
-
-## 📝 Changements Apportés
-
-### Fichiers Créés
-- `lib/metrics/types.ts`
-- `lib/metrics/pricing.ts`
-- `lib/metrics/query.ts`
-- `lib/metrics/overview.ts`
-- `lib/metrics/financial.ts`
-- `lib/metrics/analytics.ts`
-- `lib/metrics/index.ts`
-
-### Fichiers Modifiés
-- `app/dashboard/page.tsx` — Now uses `loadOverviewMetrics()`
-
-### Fichiers Inchangés (Toujours en Usage)
-- `lib/valuation.ts` — Réutilisé par metrics
-- `lib/data.ts` — Réutilisé par metrics
-- `lib/format.ts` — Réutilisé pour l'affichage
-- `lib/pnl.ts` — **À remplacer progressivement**
-- `lib/assets.ts` — **À remplacer progressivement**
-
-### Fichiers Obsolètes (À Nettoyer Plus Tard)
-- Aucun pour le moment
-
----
-
-## 🚀 Résultat Attendu
-
-✅ **Dashboard cohérent** : mêmes chiffres partout  
-✅ **Pas de duplication** : une seule source de vérité par KPI  
-✅ **Maintenable** : nouvelle règle métier = un endroit à changer  
-✅ **Testable** : services séparés peuvent être testés indépendamment  
-✅ **Extensible** : ajouter une nouvelle page = juste appeler un service
-
----
+## 🚀 Résultat attendu
+Dashboard cohérent (mêmes chiffres partout), une source de vérité par KPI, nouvelle règle métier = un seul endroit à changer (`lib/metrics/rules.ts`, `pricing.ts`).
 
 ## 📞 Support
-
-Pour toute question sur la logique métier, consulter :
-- `lib/metrics/types.ts` — Contrats de données
-- Commentaires dans chaque service (`overview.ts`, `financial.ts`, etc.)
-- README des règles métier (ce fichier)
+Logique métier : `lib/metrics/types.ts`, `lib/metrics/rules.ts` et les commentaires de chaque service.
