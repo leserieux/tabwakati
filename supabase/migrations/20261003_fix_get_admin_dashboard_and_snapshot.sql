@@ -1,0 +1,9 @@
+-- Déjà appliquées sur le projet Supabase (wakatiapp) le 2026-10-03.
+-- 1) get_admin_dashboard plantait : référence à staking_pools.reward_asset_symbol (colonne inexistante).
+--    Réécrite, même signature ; prix résolus, frais hors tests/game_net_loss, volumes swap/p2p = transactions réussies.
+--    EXECUTE retiré à anon/authenticated (réservé à service_role).
+-- 2) take_admin_snapshot échouait chaque nuit ("snapshot_date is ambiguous") sans que le cron le signale
+--    (EXCEPTION WHEN OTHERS). Ajout de `#variable_conflict use_column` + prix résolus. Snapshot du 2026-10-03 créé.
+-- 3) Données : suppression de 449 lignes platform_fees (fee_type = 'trading_service', is_test = true), sans sauvegarde,
+--    à la demande du propriétaire. Aucune référence dans treasury_ledger. Total des frais réels inchangé (~6,96 $).
+--    delete from platform_fees where is_test = true and fee_type = 'trading_service';

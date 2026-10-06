@@ -1,0 +1,8 @@
+-- Déjà appliquée sur le projet Supabase (wakatiapp) le 2026-10-03.
+-- platform_fees contient des lignes de test (trading_service : 79 860 WAKATI) et des lignes game_net_loss
+-- (signal de crédit, pas un revenu). Seuls get_platform_fees_totals, get_wakati_flows et fn_compute_wakati_daily_price
+-- les excluaient. Corrigés ici : admin_fee_dashboard, get_platform_revenue_report, get_admin_dashboard (partie frais),
+-- take_admin_snapshot (partie frais). Les données ne sont PAS supprimées (FK treasury_ledger.source_fee_id,
+-- piste d'audit). Total réel : ~6,95 $ au lieu de ~22,45 $.
+-- Non corrigée : vue matérialisée admin_asset_dashboard (colonne fees_usd), inutilisée par le dashboard.
+-- Définitions complètes : voir la migration appliquée en base.
