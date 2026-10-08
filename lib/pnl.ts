@@ -60,6 +60,38 @@ export interface PnlReport {
   truncated: boolean;
 }
 
+
+export interface Valuer {
+  prices: Map<string, number>;
+  wakatiNow: number | null;
+  wakatiPeak: number | null;
+  wakatiDaily: Map<string, number>;
+  priceAt: (asset: string, ts: number) => number | null;
+  error?: string;
+}
+
+/** Valorisation commune : WAKATI au prix du jour quand il est connu, sinon cours actuel ; autres actifs au cours actuel. */
+export async function loadValuer(): Promise<Valuer> {
+  const db = getSupabaseAdmin();
+  const [hist, prices] = await Promise.all([
+    q<any>(db.from("wakati_price_history").select("computed_for_date, final_price_usd, created_at").order("computed_for_date", { ascending: true }).order("created_at", { ascending: true })),
+    loadPrices()
+  ]);
+  const wakatiDaily = new Map<string, number>();
+  for (const h of hist.rows) { const p = Number(h.final_price_usd); if (isValidPrice(p)) wakatiDaily.set(String(h.computed_for_date).slice(0, 10), p); }
+  const wakatiNow = prices.get(WAKATI) ?? null;
+  const wakatiPeak = wakatiDaily.size ? Math.max(...wakatiDaily.values()) : null;
+  const priceAt = (asset: string, ts: number): number | null => {
+    if (asset === WAKATI) {
+      const d = wakatiDaily.get(new Date(ts).toISOString().slice(0, 10));
+      if (isValidPrice(d)) return d;
+    }
+    const p = prices.get(asset);
+    return isValidPrice(p) ? p : null;
+  };
+  return { prices, wakatiNow, wakatiPeak, wakatiDaily, priceAt, error: hist.error };
+}
+
 function emptyTotals(): Totals {
   const byCat = {} as Totals["byCat"];
   (Object.keys(CATS) as CatKey[]).forEach((k) => { byCat[k] = { usd: 0, real: 0, wakati: 0, count: 0, native: new Map() }; });
@@ -90,29 +122,16 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
   const horizon = new Date(now - 400 * DAY).toISOString();
   const txTypes = Object.keys(TX_CAT);
 
-  const [tx, fees, hist, prices, stake, wallets] = await Promise.all([
+  const [tx, fees, valuer, stake, wallets] = await Promise.all([
     fetchAll<any>((a, b) => db.from("transactions").select("type, asset_symbol, amount, created_at").eq("status", "completed").in("type", txTypes).gte("created_at", horizon).order("id").range(a, b)),
     fetchAll<any>((a, b) => db.from("platform_fees").select("asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", "(game_house_edge,game_net_loss)").gte("collected_at", horizon).order("id").range(a, b)),
-    q<any>(db.from("wakati_price_history").select("computed_for_date, final_price_usd, created_at").order("computed_for_date", { ascending: true }).order("created_at", { ascending: true })),
-    loadPrices(),
+    loadValuer(),
     q<any>(db.from("admin_staking_overview").select("total_staked, apr").eq("asset_symbol", WAKATI)),
     q<any>(db.from("treasury_wallets").select("asset_symbol, balance"))
   ]);
 
-  const wakatiDaily = new Map<string, number>();
-  for (const h of hist.rows) { const p = Number(h.final_price_usd); if (isValidPrice(p)) wakatiDaily.set(String(h.computed_for_date).slice(0, 10), p); }
-  const wakatiNow = prices.get(WAKATI) ?? null;
-  const wakatiPeak = wakatiDaily.size ? Math.max(...wakatiDaily.values()) : null;
-
+  const { prices, wakatiNow, wakatiPeak, priceAt } = valuer;
   const unpriced = new Set<string>();
-  const priceAt = (asset: string, ts: number): number | null => {
-    if (asset === WAKATI) {
-      const d = wakatiDaily.get(new Date(ts).toISOString().slice(0, 10));
-      if (isValidPrice(d)) return d;
-    }
-    const p = prices.get(asset);
-    return isValidPrice(p) ? p : null;
-  };
 
   const events: Ev[] = [];
   const push = (cat: CatKey, asset: string, amount: number, ts: number) => {
@@ -191,7 +210,7 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
     periodDays, current, previous, months, signals, treasury, treasuryUsd,
     unpriced: [...unpriced], wakatiPrice: wakatiNow, wakatiPeak,
     valuationNote: "Le WAKATI est valorisé au prix du jour quand il est connu (environ 31 derniers jours), sinon au cours actuel. Les autres actifs sont valorisés au cours actuel.",
-    error: [tx.error, fees.error, hist.error, stake.error, wallets.error].filter(Boolean).join(" · ") || undefined,
+    error: [tx.error, fees.error, valuer.error, stake.error, wallets.error].filter(Boolean).join(" · ") || undefined,
     truncated: !!(tx.truncated || fees.truncated)
   };
 }

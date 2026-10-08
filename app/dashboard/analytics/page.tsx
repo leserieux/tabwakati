@@ -1,40 +1,72 @@
-import { loadAnalyticsMetrics } from "@/lib/metrics";
+import { getSupabaseAdmin, q, fetchAll, loadPrices } from "@/lib/data";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatPct, formatUsd } from "@/lib/format";
 import { ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type User = { id: string; username: string; created_at: string | null; updated_at: string | null };
+type Balance = { user_id: string; asset_symbol: string; available_balance: number | null; staking_balance: number | null; pending_balance: number | null };
+type Tx = { user_id: string; asset_symbol: string; type: string; amount: number | null; fee: number | null; status: string | null; created_at: string | null };
+type Price = { asset_symbol: string; price_usd: number | null };
+type Fee = { asset_symbol: string; amount: number | null; fee_type: string; collected_at: string | null; is_test?: boolean };
+type Risk = { user_id: string; score: number | null; level: string | null; calculated_at: string | null };
+
+const SUCCESS = ["completed", "succeeded", "success", "successful"];
+
 export default async function AnalyticsPage() {
-  const m = await loadAnalyticsMetrics();
-  const { cashflow, users, fees, topUsers } = m;
-  const withdrawalShare = cashflow.depositsUsd ? (cashflow.withdrawalsUsd / cashflow.depositsUsd) * 100 : 0;
+  const db = getSupabaseAdmin();
+  const [users, balances, transactions, priceMap, fees, risks] = await Promise.all([
+    fetchAll<User>((a, b) => db.from("users").select("id, username, created_at, updated_at").order("id").range(a, b)),
+    fetchAll<Balance>((a, b) => db.from("user_balances").select("user_id, asset_symbol, available_balance, staking_balance, pending_balance").order("id").range(a, b)),
+    fetchAll<Tx>((a, b) => db.from("transactions").select("user_id, asset_symbol, type, amount, fee, status, created_at").order("id").range(a, b)),
+    loadPrices(),
+    fetchAll<Fee>((a, b) => db.from("platform_fees").select("asset_symbol, amount, fee_type, collected_at, is_test").order("id").range(a, b)),
+    q<Risk>(db.from("user_risk_score_history").select("user_id, score, level, calculated_at").order("calculated_at", { ascending: false })),
+  ]);
+
+  const price = priceMap;
+  const latestRisk = new Map<string, Risk>();
+  for (const row of risks.rows) if (!latestRisk.has(row.user_id)) latestRisk.set(row.user_id, row);
+
+  const currentByUser = new Map<string, number>();
+  for (const row of balances.rows) {
+    const current = Number(row.available_balance || 0) + Number(row.staking_balance || 0) + Number(row.pending_balance || 0);
+    currentByUser.set(row.user_id, (currentByUser.get(row.user_id) || 0) + current * (price.get(row.asset_symbol) || 0));
+  }
+
+  const successful = transactions.rows.filter((row) => SUCCESS.includes(String(row.status)));
+  const deposits = successful.filter((row) => row.type === "deposit").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
+  const withdrawals = successful.filter((row) => row.type === "withdrawal").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
+  const feesTotal = fees.rows.filter((row: any) => !row.is_test && row.fee_type !== "game_net_loss").reduce((sum, row) => sum + Number(row.amount || 0) * (price.get(row.asset_symbol) || 0), 0);
+  const active = new Set(successful.filter((row) => row.created_at && Date.now() - new Date(row.created_at).getTime() <= 30 * 86400000).map((row) => row.user_id));
+  const risky = [...latestRisk.values()].filter((row) => Number(row.score || 0) >= 50 || ["high", "critical"].includes(String(row.level || "").toLowerCase())).length;
+  const errors = [users.error, balances.error, transactions.error, fees.error, risks.error].filter(Boolean).join(" · ");
+  const topUsers = users.rows.map((user) => ({ user, value: currentByUser.get(user.id) || 0 })).sort((a, b) => b.value - a.value).slice(0, 25);
 
   return (
     <div>
       <PageHeader title="Analytics plateforme" subtitle="Performance financière, activité utilisateur et risque agrégés." updatedAt={formatDateTime(new Date())} />
-      <ErrorNote text={m.errors ? `Certaines données sont indisponibles : ${m.errors}` : null} />
-      {m.truncated && <ErrorNote text="Lecture tronquée : les totaux sont partiels." />}
-      {m.unpriced.length > 0 && <div className="wk-alert-warn">Sans prix valide (exclus des montants en dollars) : {m.unpriced.join(", ")}.</div>}
+      <ErrorNote text={errors ? `Certaines données sont indisponibles : ${errors}` : null} />
 
       <div className="wk-strip">
-        <Metric label="Valeur utilisateurs" value={formatCompactUsd(users.totalValueUsd)} sub="Soldes valorisés USD" />
-        <Metric label="Dépôts" value={formatCompactUsd(cashflow.depositsUsd)} sub="Transactions réussies" />
-        <Metric label="Retraits" value={formatCompactUsd(cashflow.withdrawalsUsd)} sub={`${formatPct(withdrawalShare)} des dépôts`} />
-        <Metric label="Frais plateforme" value={formatCompactUsd(fees.totalUsd)} sub="platform_fees (hors jeux)" />
-        <Metric label="Actifs 30j" value={formatCompactNumber(users.active30d)} sub="Utilisateurs actifs" />
-        <Metric label="À risque" value={formatCompactNumber(users.atRisk)} sub="Score ≥ 50" tone={users.atRisk ? "warn" : "ok"} />
+        <Metric label="Valeur utilisateurs" value={formatCompactUsd([...currentByUser.values()].reduce((a, b) => a + b, 0))} sub="Soldes valorisés USD" />
+        <Metric label="Dépôts" value={formatCompactUsd(deposits)} sub="Transactions réussies" />
+        <Metric label="Retraits" value={formatCompactUsd(withdrawals)} sub={`${formatPct(deposits ? withdrawals / deposits * 100 : 0)} des dépôts`} />
+        <Metric label="Frais plateforme" value={formatCompactUsd(feesTotal)} sub="platform_fees" />
+        <Metric label="Actifs 30j" value={formatCompactNumber(active.size)} sub="Utilisateurs actifs" />
+        <Metric label="À risque" value={formatCompactNumber(risky)} sub="Score ≥ 50" tone={risky ? "warn" : "ok"} />
       </div>
 
       <Section title="Décision plateforme" hint="Calculs basés uniquement sur les tables existantes du schéma de production.">
         <div className="wk-grid-2">
           <div className="wk-panel">
-            <p><strong>Cashflow net :</strong> {formatUsd(cashflow.netUsd)}</p>
-            <p><strong>Transactions réussies :</strong> {formatCompactNumber(cashflow.successfulCount)}</p>
-            <p><strong>Utilisateurs analysés :</strong> {formatCompactNumber(users.total)}</p>
+            <p><strong>Cashflow net :</strong> {formatUsd(deposits - withdrawals)}</p>
+            <p><strong>Transactions réussies :</strong> {formatCompactNumber(successful.length)}</p>
+            <p><strong>Utilisateurs analysés :</strong> {formatCompactNumber(users.rows.length)}</p>
           </div>
           <div className="wk-panel">
-            <p><Pill tone={users.atRisk ? "warn" : "ok"}>{users.atRisk ? `${users.atRisk} compte(s) à examiner` : "Aucun compte à risque"}</Pill></p>
+            <p><Pill tone={risky ? "warn" : "ok"}>{risky ? `${risky} compte(s) à examiner` : "Aucun compte à risque"}</Pill></p>
             <p><Pill tone="info">Performance comptable, pas P&amp;L réel</Pill></p>
           </div>
         </div>
@@ -46,14 +78,14 @@ export default async function AnalyticsPage() {
             <tr><Th>Utilisateur</Th><Th right>Valeur USD</Th><Th>Dernière activité</Th><Th>Risque</Th></tr>
           </thead>
           <tbody>
-            {topUsers.map((user) => {
-              const score = user.riskScore?.score ?? null;
+            {topUsers.map(({ user, value }) => {
+              const risk = latestRisk.get(user.id);
               return (
-                <tr key={user.userId}>
-                  <Td><a className="wk-link" href={`/dashboard/users/${user.userId}`}>{user.username}</a></Td>
-                  <Td right>{formatUsd(user.valueUsd)}</Td>
-                  <Td>{user.lastActivity ? formatDateTime(new Date(user.lastActivity)) : "—"}</Td>
-                  <Td>{score === null ? "—" : <Pill tone={score >= 75 ? "bad" : score >= 50 ? "warn" : "ok"}>{score}/100</Pill>}</Td>
+                <tr key={user.id}>
+                  <Td><a className="wk-link" href={`/dashboard/users/${user.id}`}>{user.username}</a></Td>
+                  <Td right>{formatUsd(value)}</Td>
+                  <Td>{user.updated_at ? formatDateTime(new Date(user.updated_at)) : "—"}</Td>
+                  <Td>{risk ? <Pill tone={Number(risk.score || 0) >= 75 ? "bad" : Number(risk.score || 0) >= 50 ? "warn" : "ok"}>{risk.score ?? 0}/100</Pill> : "—"}</Td>
                 </tr>
               );
             })}

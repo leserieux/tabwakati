@@ -8,7 +8,12 @@ export interface NavEntry { key: string; label: string; icon: IconName; href: st
 /** Navigation unique : 8 entrées. Les sous-pages d'un même sujet sont des onglets (SectionTabs). */
 export const NAV: NavEntry[] = [
   { key: "overview", label: "Vue d'ensemble", icon: "grid", href: "/dashboard" },
-  { key: "pnl", label: "Résultat", icon: "activity", href: "/dashboard/pnl" },
+  { key: "pnl", label: "Résultat & pertes", icon: "activity", href: "/dashboard/pnl", tabs: [
+    { href: "/dashboard/pnl", label: "Résultat" },
+    { href: "/dashboard/pnl/depots", label: "Dépôts" },
+    { href: "/dashboard/pnl/roue", label: "Roue" },
+    { href: "/dashboard/pnl/utilisateurs", label: "Rentabilité" }
+  ] },
   { key: "users", label: "Utilisateurs", icon: "users", href: "/dashboard/users" },
   { key: "transactions", label: "Transactions", icon: "log", href: "/dashboard/transactions" },
   { key: "treasury", label: "Trésorerie", icon: "shield", href: "/dashboard/treasury", tabs: [
@@ -31,7 +36,8 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/wakati/staking", label: "Staking" },
     { href: "/dashboard/wakati/detenteurs", label: "Détenteurs" }
   ] },
-  { key: "admin", label: "Administration", icon: "gear", href: "/dashboard/tasks", tabs: [
+  { key: "admin", label: "Administration", icon: "gear", href: "/dashboard/controls", tabs: [
+    { href: "/dashboard/controls", label: "Contrôles" },
     { href: "/dashboard/tasks", label: "Tâches" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
     { href: "/dashboard/settings", label: "Paramètres" }

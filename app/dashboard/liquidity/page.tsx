@@ -61,7 +61,10 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
   admin_reclaim: "Récupération admin",
   loan_disbursement: "Prêt versé",
   loan_repayment: "Remboursement de prêt",
-  liquidation: "Liquidation"
+  liquidation: "Liquidation",
+  wakati_sale: "Vente de WAKATI",
+  swap_in: "Swap : actif reçu",
+  swap_out: "Swap : actif versé"
 };
 
 function computeStatus(have: number | null, owe: number | null, ledger: number | null, canSwap: boolean, swapVolume: number): Status {

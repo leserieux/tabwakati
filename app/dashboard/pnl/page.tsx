@@ -1,4 +1,4 @@
-import { loadFinancialMetrics } from "@/lib/metrics";
+import { loadPnl, CATS, type CatKey } from "@/lib/pnl";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -20,12 +20,12 @@ const nativeList = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b
 export default async function PnlPage({ searchParams }: { searchParams: { p?: string } }) {
   const parsed = Number(searchParams.p);
   const period = PERIODS.some((x) => x.value === parsed) && searchParams.p !== undefined ? parsed : 30;
-  const r = await loadFinancialMetrics({ period });
-  const c = r;
+  const r = await loadPnl(period);
+  const c = r.current;
   const periodLabel = PERIODS.find((x) => x.value === period)!.label.toLowerCase();
-  const delta = r.deltaPrevious;
-  const maxAbs = Math.max(...r.monthlyBreakdown.map((m) => Math.abs(m.net)), 0.0001);
-  const order = ["fees", "game_bets", "game_wins", "staking", "referral", "defaults"] as const;
+  const delta = r.previous ? c.net - r.previous.net : null;
+  const maxAbs = Math.max(...r.months.map((m) => Math.abs(m.net)), 0.0001);
+  const order: CatKey[] = ["fees", "game_bets", "game_wins", "staking", "referral", "defaults"];
 
   return (
     <div>
@@ -44,23 +44,23 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
       <div className="wk-strip">
         <div className="wk-strip-item">
           <div className="wk-strip-label">Résultat net ({periodLabel})</div>
-          <div className={`wk-strip-value ${tone(c.netTotal)}`}>{signed(c.netTotal)}</div>
+          <div className={`wk-strip-value ${tone(c.net)}`}>{signed(c.net)}</div>
           <div className="wk-strip-sub">{delta === null ? "Toute la période" : `${signed(delta)} vs période précédente`}</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">En argent réel</div>
-          <div className={`wk-strip-value ${tone(c.realTotal)}`}>{signed(c.realTotal)}</div>
+          <div className={`wk-strip-value ${tone(c.real)}`}>{signed(c.real)}</div>
           <div className="wk-strip-sub">FCFA, crypto</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">En WAKATI</div>
-          <div className={`wk-strip-value ${tone(c.wakatiTotal)}`}>{signed(c.wakatiTotal)}</div>
+          <div className={`wk-strip-value ${tone(c.wakati)}`}>{signed(c.wakati)}</div>
           <div className="wk-strip-sub">Jeton interne, valeur selon son cours</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Jeux (mises − gains)</div>
           <div className={`wk-strip-value ${tone(c.gameNet)}`}>{signed(c.gameNet)}</div>
-          <div className="wk-strip-sub">{c.gameRtp === null ? "Aucune mise sur la période" : `Joueurs : ${formatPct(c.gameRtp, 0)} des mises récupérées`}</div>
+          <div className="wk-strip-sub">{c.rtp === null ? "Aucune mise sur la période" : `Joueurs : ${formatPct(c.rtp, 0)} des mises récupérées`}</div>
         </div>
       </div>
 
@@ -81,18 +81,9 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
           <tbody>
             {order.map((k) => {
               const l = c.byCat[k];
-              const labels: Record<typeof k, { label: string; hint: string }> = {
-                fees: { label: "Frais (hors jeux)", hint: "Swap, retrait, prêts, achat WAKATI" },
-                game_bets: { label: "Mises des joueurs", hint: "Tout ce que les joueurs ont misé (y compris la part jackpot, 5 %)" },
-                game_wins: { label: "Gains payés aux joueurs", hint: "Inclut les gains des tours gratuits et du jackpot" },
-                staking: { label: "Récompenses de staking", hint: "Versées aux utilisateurs qui stakent" },
-                referral: { label: "Bonus de parrainage", hint: "Versés aux parrains" },
-                defaults: { label: "Prêts score en défaut", hint: "Montant non remboursé. Les prêts liquidés ne sont pas inclus." }
-              };
-              const lbl = labels[k];
               return (
                 <tr key={k}>
-                  <Td label="Ligne"><div>{lbl.label}</div><div style={{ color: "var(--muted)", fontSize: 12.5 }}>{lbl.hint}</div></Td>
+                  <Td label="Ligne"><div>{CATS[k].label}</div><div style={{ color: "var(--muted)", fontSize: 12.5 }}>{CATS[k].hint}</div></Td>
                   <Td right label="Argent réel"><span className={tone(l.real)}>{signed(l.real)}</span></Td>
                   <Td right label="WAKATI"><span className={tone(l.wakati)}>{signed(l.wakati)}</span></Td>
                   <Td right label="Total"><span className={tone(l.usd)}>{signed(l.usd)}</span></Td>
@@ -103,9 +94,9 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
             })}
             <tr>
               <Td label="Ligne"><strong>Résultat net</strong></Td>
-              <Td right label="Argent réel"><strong className={tone(c.realTotal)}>{signed(c.realTotal)}</strong></Td>
-              <Td right label="WAKATI"><strong className={tone(c.wakatiTotal)}>{signed(c.wakatiTotal)}</strong></Td>
-              <Td right label="Total"><strong className={tone(c.netTotal)}>{signed(c.netTotal)}</strong></Td>
+              <Td right label="Argent réel"><strong className={tone(c.real)}>{signed(c.real)}</strong></Td>
+              <Td right label="WAKATI"><strong className={tone(c.wakati)}>{signed(c.wakati)}</strong></Td>
+              <Td right label="Total"><strong className={tone(c.net)}>{signed(c.net)}</strong></Td>
               <Td right hideSm label="Opérations">—</Td>
               <Td hideSm label="Montants natifs">—</Td>
             </tr>
@@ -117,7 +108,7 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
         <TableWrap>
           <thead><tr><Th>Mois</Th><Th right>Frais</Th><Th right>Jeux (net)</Th><Th right hideSm>Coûts</Th><Th right>Résultat</Th><Th hideSm> </Th></tr></thead>
           <tbody>
-            {r.monthlyBreakdown.map((m) => (
+            {r.months.map((m) => (
               <tr key={m.key}>
                 <Td label="Mois">{monthLabel(m.key)}</Td>
                 <Td right label="Frais"><span className={tone(m.fees)}>{signed(m.fees)}</span></Td>
@@ -150,7 +141,7 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
         </TableWrap>
       </Section>
 
-      <p className="wk-hint">Le WAKATI est valorisé au prix du jour quand il est connu (environ 31 derniers jours), sinon au cours actuel. Les autres actifs sont valorisés au cours actuel. Ce tableau est une estimation de gestion à partir des transactions : il ne remplace pas une comptabilité.</p>
+      <p className="wk-hint">{r.valuationNote} Ce tableau est une estimation de gestion à partir des transactions : il ne remplace pas une comptabilité.</p>
     </div>
   );
 }
