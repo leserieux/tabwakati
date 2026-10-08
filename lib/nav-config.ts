@@ -34,6 +34,7 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/wakati", label: "Tokenomics" },
     { href: "/dashboard/wakati/prix", label: "Prix & réserve" },
     { href: "/dashboard/wakati/staking", label: "Staking" },
+    { href: "/dashboard/wakati/burns", label: "Burns" },
     { href: "/dashboard/wakati/detenteurs", label: "Détenteurs" }
   ] },
   { key: "admin", label: "Administration", icon: "gear", href: "/dashboard/controls", tabs: [
