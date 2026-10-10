@@ -35,9 +35,12 @@ export default async function OffrePage() {
   const [w, burns, f90] = await Promise.all([loadWakati(), loadBurns(), loadFlows(90)]);
   const { chain, inApp, wallet } = w;
 
-  const hasChain = chain.totalSupply !== null;
-  const treasury = wallet?.balance ?? chain.treasury ?? 0;
-  const cap = hasChain ? (chain.totalSupply as number) : inApp.total + treasury;
+  // Plafond propre à l'application (Burns > Réglages). Vide = automatique : WAKATI chez les utilisateurs + trésorerie interne.
+  // Ce n'est pas l'offre de la blockchain.
+  const treasury = wallet?.balance ?? 0;
+  const configuredCap = burns.rule?.supplyCapWakati ?? null;
+  const cap = configuredCap ?? inApp.total + treasury;
+  const capBelowUsage = configuredCap !== null && configuredCap < inApp.total + treasury;
 
   const sum = (rows: FlowRow[], types: string[]) => rows.filter((r) => types.includes(r.type)).reduce((n, r) => n + r.total, 0);
   const f30 = w.flows;
@@ -72,6 +75,9 @@ export default async function OffrePage() {
 
   return (
     <div>
+      {capBelowUsage && (
+        <div className="wk-alert-bad">Le plafond défini ({formatToken(cap)} WAKATI) est inférieur à ce qui existe déjà dans l'app ({formatToken(inApp.total + treasury)} WAKATI chez les utilisateurs et en trésorerie). Corrige-le dans Burns &gt; Réglages.</div>
+      )}
       {(w.errors.length > 0 || burns.error || f90.error) && (
         <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {[...w.errors, burns.error, f90.error].filter(Boolean).join(" · ")}</div>
       )}
@@ -80,7 +86,7 @@ export default async function OffrePage() {
         <div className="wk-strip-item">
           <div className="wk-strip-label">Plafond de l'offre</div>
           <div className="wk-strip-value">{formatCompactNumber(cap)}</div>
-          <div className="wk-strip-sub">{hasChain ? "lu sur la blockchain" : "estimé (en app + trésorerie)"}</div>
+          <div className="wk-strip-sub">{configuredCap !== null ? "défini dans l'app (Burns > Réglages)" : "automatique (en app + trésorerie)"}</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Émission nette sur 30 jours</div>

@@ -16,6 +16,7 @@ export interface BurnRule {
   maxDailyBurnWakati: number | null;
   minBurnWakati: number;
   minTreasuryKeepWakati: number;
+  supplyCapWakati: number | null; // plafond de l'offre défini dans l'app ; null = automatique (en app + trésorerie)
   carryDueUsd: number;
   fcfaUsd: number | null;      // valeur d'1 FCFA en dollars (pour afficher le seuil en $)
   updatedAt: string | null;
@@ -52,7 +53,7 @@ export async function loadBurns(now = Date.now()): Promise<BurnsReport> {
   const [burnRes, runRes, setRes, resRes, walletRes, statusRes] = await Promise.all([
     q<any>(db.from("token_burns").select("id, asset_symbol, amount, reason, status, tx_hash, source, created_at").eq("asset_symbol", "WAKATI").order("created_at", { ascending: false }).limit(300)),
     q<any>(db.from("burn_runs").select("id, run_at, status, wakati_price_usd, new_due_usd, burn_wakati, carried_out_usd, note").order("run_at", { ascending: false }).limit(15)),
-    q<any>(db.from("burn_settings").select("enabled, burn_start_price_fcfa, burn_share_pct, max_treasury_pct_per_day, max_daily_burn_wakati, min_burn_wakati, min_treasury_keep_wakati, carry_due_usd, updated_at, updated_by").eq("id", 1)),
+    q<any>(db.from("burn_settings").select("enabled, burn_start_price_fcfa, burn_share_pct, max_treasury_pct_per_day, max_daily_burn_wakati, min_burn_wakati, min_treasury_keep_wakati, supply_cap_wakati, carry_due_usd, updated_at, updated_by").eq("id", 1)),
     q<any>(db.from("wakati_reserve_state").select("reserve_usd, profit_share_pct, max_daily_change_pct, price_floor_usd, is_active, last_computed_at").eq("id", 1)),
     q<any>(db.from("treasury_wallets").select("balance").eq("asset_symbol", "WAKATI")),
     db.rpc("fn_wakati_burn_status")
@@ -81,6 +82,7 @@ export async function loadBurns(now = Date.now()): Promise<BurnsReport> {
       maxDailyBurnWakati: s.max_daily_burn_wakati == null ? null : Number(s.max_daily_burn_wakati),
       minBurnWakati: Number(s.min_burn_wakati || 0),
       minTreasuryKeepWakati: Number(s.min_treasury_keep_wakati || 0),
+      supplyCapWakati: s.supply_cap_wakati == null ? null : Number(s.supply_cap_wakati),
       carryDueUsd: Number(s.carry_due_usd || 0),
       fcfaUsd: st?.fcfa_price_usd == null ? null : Number(st.fcfa_price_usd),
       updatedAt: s.updated_at ?? null,

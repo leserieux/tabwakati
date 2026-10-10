@@ -82,6 +82,7 @@ export default async function BurnsPage({ searchParams }: { searchParams: { save
                 <Field label="Plafond par jour (WAKATI)" name="max_daily_burn_wakati" defaultValue={r.rule.maxDailyBurnWakati} placeholder="aucun" hint="Vide = pas de plafond absolu. Le reste est reporté au lendemain." />
                 <Field label="Burn minimum (WAKATI)" name="min_burn_wakati" defaultValue={r.rule.minBurnWakati} hint="En dessous, le montant est reporté." />
                 <Field label="Trésorerie à toujours conserver (WAKATI)" name="min_treasury_keep_wakati" defaultValue={r.rule.minTreasuryKeepWakati} hint="Le burn ne descend jamais sous ce solde." />
+                <Field label="Plafond de l'offre WAKATI (WAKATI)" name="supply_cap_wakati" defaultValue={r.rule.supplyCapWakati} placeholder="automatique" hint="Offre totale propre à l'application, affichée dans WAKATI > Offre. Vide = automatique (WAKATI chez les utilisateurs + trésorerie). Ne crée ni ne bloque aucun jeton." />
                 <Toggle label="Burn activé (décoché = tout va dans la caisse)" name="enabled" defaultChecked={r.rule.enabled} />
               </div>
               <button type="submit" className="wk-submit-sm">Enregistrer le burn</button>

@@ -100,6 +100,7 @@ export async function updateBurnSettings(formData: FormData) {
     max_daily_burn_wakati: readNum(formData, "max_daily_burn_wakati", "Plafond par jour (WAKATI)", { min: 0, minExclusive: true, nullable: true }, errors),
     min_burn_wakati: readNum(formData, "min_burn_wakati", "Burn minimum (WAKATI)", { min: 0 }, errors),
     min_treasury_keep_wakati: readNum(formData, "min_treasury_keep_wakati", "Trésorerie à conserver (WAKATI)", { min: 0 }, errors),
+    supply_cap_wakati: readNum(formData, "supply_cap_wakati", "Plafond de l'offre (WAKATI)", { min: 0, minExclusive: true, nullable: true }, errors),
     updated_by: getCurrentActor()
   };
   if (errors.length > 0) back("error", errors.join(" "));
