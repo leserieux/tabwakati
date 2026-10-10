@@ -30,6 +30,8 @@ export interface FeesReport {
   byMonth: FeeGroup[];
   unpriced: string[];
   excluded: { count: number; usd: number; unpricedAssets: string[] };
+  /** Mises encaissées des jeux (game_house_edge) : affichées à part, exclues du total (déjà dans les mises du P&L). */
+  gameHouseEdge: { count: number; usd: number };
   truncated: boolean;
   error?: string;
 }
@@ -37,8 +39,9 @@ export interface FeesReport {
 const DAY = 86_400_000;
 
 /**
- * Frais réels = hors lignes de test et hors game_net_loss (signal de crédit, pas un revenu).
- * Même règle que get_platform_fees_totals côté SQL ; valorisation au cours actuel.
+ * Frais réels = hors lignes de test, hors game_net_loss (signal de crédit) et hors game_house_edge
+ * (déjà compris dans les mises du P&L). Même règle que lib/metrics/rules.ts, donc même total que la
+ * Vue d'ensemble, le P&L et Analytics. game_house_edge est exposé à part. Valorisation au cours actuel.
  */
 export async function loadFeesReport(now = Date.now()): Promise<FeesReport> {
   const db = getSupabaseAdmin();
@@ -63,7 +66,16 @@ export async function loadFeesReport(now = Date.now()): Promise<FeesReport> {
     return g;
   };
 
+  let houseCount = 0, houseUsd = 0;
+  const realRows: FeeRow[] = [];
   for (const r of real.rows) {
+    if (r.fee_type === "game_house_edge") {
+      houseCount += 1;
+      houseUsd += usdOf(r.asset_symbol, Number(r.amount || 0)) ?? 0;
+    } else realRows.push(r);
+  }
+
+  for (const r of realRows) {
     const amount = Number(r.amount || 0);
     const usd = usdOf(r.asset_symbol, amount);
     if (usd === null) { if (amount > 0) unpriced.add(r.asset_symbol); }
@@ -88,7 +100,7 @@ export async function loadFeesReport(now = Date.now()): Promise<FeesReport> {
 
   const byUsd = (x: FeeGroup, y: FeeGroup) => y.usd - x.usd;
   return {
-    totalUsd, count: real.rows.length, last30Usd, last7Usd, todayUsd,
+    totalUsd, count: realRows.length, gameHouseEdge: { count: houseCount, usd: houseUsd }, last30Usd, last7Usd, todayUsd,
     byType: [...types.values()].sort(byUsd),
     byAsset: [...assets.values()].sort(byUsd),
     byMonth: [...months.values()].sort((x, y) => y.key.localeCompare(x.key)),
