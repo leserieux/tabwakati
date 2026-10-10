@@ -15,13 +15,13 @@ const nativeList = (byAsset: Map<string, number>) =>
 
 export default async function FeesPage() {
   const r = await loadFeesReport();
-  const gamesUsd = r.byType.find((t) => t.key === "game_house_edge")?.usd ?? 0;
+  const gamesUsd = r.gameHouseEdge.usd;
   const share = (usd: number) => (r.totalUsd > 0 ? (usd / r.totalUsd) * 100 : 0);
   const maxMonth = Math.max(...r.byMonth.map((m) => m.usd), 0);
 
   return (
     <div>
-      <PageHeader title="Frais" subtitle="Revenus réels de la plateforme : hors lignes de test et hors game_net_loss, valorisés au cours actuel." updatedAt={formatDateTime(new Date())} />
+      <PageHeader title="Frais" subtitle="Revenus réels de la plateforme : hors lignes de test, hors jeux (game_house_edge) et hors game_net_loss, valorisés au cours actuel. Même total que la Vue d'ensemble." updatedAt={formatDateTime(new Date())} />
       <ErrorNote text={r.error ? `Certaines données sont indisponibles : ${r.error}` : null} />
       {r.truncated && <ErrorNote text="Lecture tronquée : plus de 200 000 lignes de frais, les totaux sont partiels." />}
       {r.unpriced.length > 0 && <div className="wk-alert-warn">Sans cours valide, donc exclus des totaux USD : {r.unpriced.join(", ")}.</div>}
@@ -30,10 +30,10 @@ export default async function FeesPage() {
         <div className="wk-strip-item"><div className="wk-strip-label">Total réel</div><div className="wk-strip-value">{formatUsd(r.totalUsd)}</div><div className="wk-strip-sub">{formatNumber(r.count, 0)} lignes comptées</div></div>
         <div className="wk-strip-item"><div className="wk-strip-label">30 derniers jours</div><div className="wk-strip-value">{formatUsd(r.last30Usd)}</div><div className="wk-strip-sub">{formatPct(share(r.last30Usd))} du total</div></div>
         <div className="wk-strip-item"><div className="wk-strip-label">7 derniers jours</div><div className="wk-strip-value">{formatUsd(r.last7Usd)}</div><div className="wk-strip-sub">Aujourd'hui : {formatUsd(r.todayUsd)}</div></div>
-        <div className="wk-strip-item"><div className="wk-strip-label">Part des jeux (brut)</div><div className="wk-strip-value">{formatPct(share(gamesUsd), 0)}</div><div className="wk-strip-sub">{formatUsd(gamesUsd)} encaissés avant gains</div></div>
+        <div className="wk-strip-item"><div className="wk-strip-label">Mises encaissées (jeux, brut)</div><div className="wk-strip-value">{formatUsd(gamesUsd)}</div><div className="wk-strip-sub">Hors total : avant gains payés</div></div>
       </div>
 
-      <div className="wk-alert-warn">Les « mises encaissées » sont un montant brut : les gains payés aux joueurs en sortent ensuite. Pour savoir si les jeux rapportent vraiment, voir <a href="/dashboard/pnl" style={{ textDecoration: "underline" }}>Résultat</a>.</div>
+      <div className="wk-alert-warn">Les « mises encaissées » (game_house_edge) ne sont pas comptées dans le total : c'est un montant brut, déjà compris dans les mises du Résultat, et les gains payés aux joueurs en sortent ensuite. Pour savoir si les jeux rapportent vraiment, voir <a href="/dashboard/pnl" style={{ textDecoration: "underline" }}>Résultat</a>.</div>
 
       <Section title="Par type de frais" hint="Montants natifs à gauche, valeur en dollars au cours actuel à droite.">
         <TableWrap>
@@ -83,6 +83,7 @@ export default async function FeesPage() {
 
       <Section title="Exclus des totaux">
         <div className="wk-panel">
+          {r.gameHouseEdge.count} ligne(s) <code>game_house_edge</code>, soit {formatUsd(r.gameHouseEdge.usd)} : mises encaissées des jeux, comptées dans le Résultat (mises des joueurs).<br />
           {r.excluded.count} ligne(s) <code>game_net_loss</code>, soit {formatUsd(r.excluded.usd)} : c'est un signal utilisé par le calcul de capacité d'emprunt des joueurs, pas un revenu.
           {r.excluded.unpricedAssets.length > 0 && ` Sans cours : ${r.excluded.unpricedAssets.join(", ")}.`}
         </div>

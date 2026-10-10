@@ -1,4 +1,5 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
+import { computeCoverage } from "@/lib/valuation";
 import { loadOnchainCustody } from "@/lib/custody";
 import { loadFiatCustody } from "@/lib/pawapay";
 import { loadWakatiInApp } from "@/lib/wakati";
@@ -213,16 +214,14 @@ export default async function LiquidityPage({
   const errored = lines.filter((l) => l.status === "error");
   const swappableAssets = lines.filter((l) => l.canSwap);
 
-  let heldUsd = 0;
-  let owedUsd = 0;
-  let coveredUsd = 0;
-  for (const l of lines) {
-    if (l.have === null || l.owe === null || l.priceUsd === null) continue;
-    heldUsd += l.have * l.priceUsd;
-    owedUsd += l.owe * l.priceUsd;
-    coveredUsd += Math.min(l.have, l.owe) * l.priceUsd;
-  }
-  const coverage = owedUsd > 0 ? coveredUsd / owedUsd : 1;
+  // Même calcul que la Vue d'ensemble (lib/valuation) : actif par actif, un actif sans prix valide est signalé, jamais compté à 0.
+  const cov = computeCoverage(
+    lines
+      .filter((l) => l.have !== null && l.owe !== null)
+      .map((l) => ({ asset: l.asset, owed: l.owe as number, held: l.have as number, price: l.priceUsd }))
+  );
+  const { heldUsd, owedUsd } = cov;
+  const coverage = Number.isNaN(cov.coveragePct) ? 1 : cov.coveragePct / 100;
   const missingUsd = short.reduce((n, l) => n + (l.priceUsd !== null ? -(gap(l) ?? 0) * l.priceUsd : 0), 0);
 
   const todo: { tone: "bad" | "warn"; text: string }[] = [];
@@ -230,6 +229,7 @@ export default async function LiquidityPage({
   for (const l of short) todo.push({ tone: "bad", text: `Il manque ${formatNumber(-(gap(l) ?? 0))} ${l.asset}${usd(l, -(gap(l) ?? 0)) ? ` (~${usd(l, -(gap(l) ?? 0))})` : ""} vs ${l.compareLabel}.` });
   for (const l of dry) todo.push({ tone: "warn", text: `${l.asset} : réserve à sec malgré une activité de swap passée.` });
   for (const l of minor) todo.push({ tone: "warn", text: `${l.asset} : écart mineur (< ${formatUsd(MINOR_USD)}) vs ${l.compareLabel}.` });
+  if (cov.unpriced.length > 0) todo.push({ tone: "warn", text: `Sans prix valide (exclus des totaux en dollars) : ${cov.unpriced.join(", ")}.` });
   for (const l of errored) todo.push({ tone: "bad", text: `${l.asset} : lecture impossible (${l.error || "erreur inconnue"}).` });
 
   const hero =

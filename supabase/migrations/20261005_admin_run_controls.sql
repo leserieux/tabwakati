@@ -1,0 +1,7 @@
+-- Appliquée sur le projet Supabase (wakatiapp) le 2026-10-05 (migrations admin_run_controls, admin_run_controls_variable_conflict,
+-- lock_admin_matview_and_fix_wakati_control).
+-- Fonction public.admin_run_controls() : 25 contrôles automatiques (comptabilité, prix, tâches planifiées, opérations, jeux, sécurité),
+-- SECURITY DEFINER, lecture seule, EXECUTE réservé à service_role. Retourne (check_key, category, label, status, value, detail).
+-- La définition complète vit dans la base ; pour l'exporter dans ce dépôt :
+--   select pg_get_functiondef('public.admin_run_controls'::regproc);
+-- Utilisée par lib/controls.ts et la page /dashboard/controls.

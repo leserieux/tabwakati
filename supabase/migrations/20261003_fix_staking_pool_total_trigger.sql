@@ -1,10 +1,4 @@
--- Déjà appliquée sur le projet Supabase (wakatiapp) le 2026-10-03.
--- La fonction trg_sync_pool_total existait mais n'était branchée sur aucune table : total_staked restait à 0.
-drop trigger if exists trg_sync_pool_total on public.user_stakes;
-create trigger trg_sync_pool_total
-after insert or update of amount, status, pool_id or delete on public.user_stakes
-for each row execute function public.trg_sync_pool_total();
-
-update public.staking_pools sp
-set total_staked = coalesce((select sum(us.amount) from public.user_stakes us where us.pool_id = sp.id and us.status = 'active'), 0),
-    updated_at = now();
+-- ANNULÉE par 20261005_revert_staking_pool_total_trigger.sql — ne rien exécuter ici.
+-- Cette migration branchait trg_sync_pool_total sur user_stakes. C'était une erreur de diagnostic :
+-- fn_stake / fn_unstake / fn_admin_reclaim_user_balance maintiennent déjà staking_pools.total_staked de façon
+-- incrémentale, le trigger faisait double emploi (+300 constaté). Le "0" observé venait du pool MATIC (limit 1).

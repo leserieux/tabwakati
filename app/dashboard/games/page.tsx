@@ -27,6 +27,9 @@ type WheelSegment = {
   is_active: boolean;
   actual_hits: number;
   actual_hit_rate_pct: number | null;
+  recent_hits: number;
+  recent_total: number;
+  recent_hit_rate_pct: number | null;
 };
 
 type WheelConfig = {
@@ -63,8 +66,8 @@ type PredictionAssetStat = {
 type StreakRow = { user_id: string; best_win_streak: number; total_bets: number; total_wins: number; net_profit: number };
 type WheelStreakRow = { user_id: string; longest_streak: number; total_spins: number };
 
-function deviationTone(configured: number, actual: number | null): Tone {
-  if (actual === null) return "info";
+function deviationTone(configured: number, actual: number | null, reliable = true): Tone {
+  if (actual === null || !reliable) return "info";
   const gap = Math.abs(actual - configured);
   if (gap >= 10) return "bad";
   if (gap >= 5) return "warn";
@@ -97,6 +100,10 @@ export default async function GamesPage() {
   shownStreaks.forEach((r, i) => { r.total_spins = realCounts[i].count ?? r.total_spins; });
 
   const wheel = wheelSummaryRes.data as WheelSummary | null;
+  // Les probabilités ont changé au fil du temps : on juge l'écart sur 30 jours glissants, et seulement si l'échantillon est assez grand.
+  const MIN_SAMPLE = 100;
+  const recentTotal = Number(wheelSegmentsRes.rows[0]?.recent_total || 0);
+  const sampleOk = recentTotal >= MIN_SAMPLE;
   const wheelConfig = wheelConfigRes.data as WheelConfig | null;
   const pred = predSummaryRes.data as PredictionSummary | null;
 
@@ -137,7 +144,7 @@ export default async function GamesPage() {
                 <Th>Segment</Th>
                 <Th>Type</Th>
                 <Th right>Probabilité configurée</Th>
-                <Th right>Taux de sortie réel</Th>
+                <Th right>Taux de sortie réel (30 j)</Th>
                 <Th right>Occurrences</Th>
                 <Th>Statut</Th>
               </tr>
@@ -148,9 +155,9 @@ export default async function GamesPage() {
                   <Td label="Segment">{seg.label} {seg.is_jackpot && <Pill tone="warn">Jackpot</Pill>}</Td>
                   <Td label="Type">{seg.reward_type}</Td>
                   <Td right label="Probabilité configurée">{formatPct(seg.configured_probability_pct)}</Td>
-                  <Td right label="Taux de sortie réel">
-                    {seg.actual_hit_rate_pct === null ? "—" : (
-                      <Pill tone={deviationTone(seg.configured_probability_pct, seg.actual_hit_rate_pct)}>{formatPct(seg.actual_hit_rate_pct)}</Pill>
+                  <Td right label="Taux de sortie réel (30 j)">
+                    {seg.recent_hit_rate_pct === null ? "—" : (
+                      <Pill tone={deviationTone(seg.configured_probability_pct, seg.recent_hit_rate_pct, sampleOk)}>{formatPct(seg.recent_hit_rate_pct)}</Pill>
                     )}
                   </Td>
                   <Td right label="Occurrences">{seg.actual_hits}</Td>
@@ -161,7 +168,7 @@ export default async function GamesPage() {
           </TableWrap>
         )}
         <div className="wk-asset-sub" style={{ marginTop: 8 }}>
-          Taux de sortie réel calculé sur les tours dont le segment est connu ({(wheel?.total_spins || 0) > 0 ? "une partie des tours historiques n'a pas de segment enregistré" : "aucune donnée"}). Un écart de 5 à 10 points est à surveiller, au-delà de 10 points c'est une vraie anomalie à creuser.
+          Taux de sortie calculé sur les {recentTotal} tours des 30 derniers jours (les probabilités ayant été modifiées au fil du temps, l'historique complet n'est pas comparable). {sampleOk ? "Un écart de 5 à 10 points est à surveiller, au-delà de 10 points c'est une vraie anomalie à creuser." : `Échantillon trop petit (moins de ${MIN_SAMPLE} tours) : aucune alerte n'est levée.`} Occurrences : depuis le début.
         </div>
       </Section>
 

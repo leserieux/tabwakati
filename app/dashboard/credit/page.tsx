@@ -52,7 +52,7 @@ type ScoreLoanRisk = {
   risk_state: string;
 };
 
-type PairAgg = { collateral_asset: string; borrow_asset: string; prets_actifs: number; prets_rembourses: number; prets_liquides: number; total_emprunte_actif: number; total_collateral_verrouille: number };
+type PairAgg = { collateral_asset: string; borrow_asset: string; prets_actifs: number; prets_rembourses: number; prets_liquides: number; total_emprunte_actif: number; total_collateral_verrouille: number; prets_a_risque: number };
 
 const RISK_STATE_LABEL: Record<string, string> = {
   en_cours: "En cours",
@@ -83,23 +83,12 @@ export default async function CreditPage() {
     db.from("admin_credit_summary").select("*").maybeSingle(),
     q<LoanRisk>(db.from("admin_active_loans_risk").select("*").order("marge_avant_liquidation_pct", { ascending: true }).limit(25)),
     q<ScoreLoanRisk>(db.from("admin_score_loans_risk").select("*").order("opened_at", { ascending: false }).limit(50)),
-    q<PairAgg>(db.from("admin_loans_dashboard").select("collateral_asset, borrow_asset, prets_actifs, prets_rembourses, prets_liquides, total_emprunte_actif, total_collateral_verrouille")),
+    q<PairAgg>(db.from("admin_loans_dashboard").select("collateral_asset, borrow_asset, prets_actifs, prets_rembourses, prets_liquides, total_emprunte_actif, total_collateral_verrouille, prets_a_risque")),
     db.from("score_credit_config").select("loan_duration_days, grace_period_hours, default_fee_multiplier, first_loan_cap_usd, max_absolute_cap_usd").eq("id", 1).maybeSingle()
   ]);
 
   const summary = summaryRes.data as Summary | null;
   const errors = [summaryRes.error?.message, loanRiskRes.error, scoreLoanRiskRes.error, pairRes.error].filter(Boolean).join(" · ");
-
-  // Compteur "à risque" par paire, calculé côté app depuis admin_active_loans_risk
-  // (la colonne prets_a_risque de admin_loans_dashboard est cassée : elle dépend
-  // de v_active_loans_health qui filtre par auth.uid(), toujours NULL côté admin).
-  const riskByPair = new Map<string, number>();
-  for (const row of loanRiskRes.rows) {
-    const key = `${row.collateral_asset}/${row.borrow_asset}`;
-    if (row.marge_avant_liquidation_pct !== null && row.marge_avant_liquidation_pct < 10) {
-      riskByPair.set(key, (riskByPair.get(key) || 0) + 1);
-    }
-  }
 
   const scoreActive = scoreLoanRiskRes.rows.filter((r) => r.status === "active");
   const scoreByState = {
@@ -148,7 +137,7 @@ export default async function CreditPage() {
             <tbody>
               {pairRes.rows.map((row) => {
                 const key = `${row.collateral_asset}/${row.borrow_asset}`;
-                const risk = riskByPair.get(key) || 0;
+                const risk = Number(row.prets_a_risque || 0);
                 return (
                   <tr key={key}>
                     <Td>{row.collateral_asset}</Td>
