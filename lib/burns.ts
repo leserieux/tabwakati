@@ -40,9 +40,6 @@ export interface BurnsReport {
   reserve: ReserveSettings | null;
   reserveUsd: number | null;    // la caisse
   totalBurned: number;          // WAKATI brûlés (comptable)
-  pendingAmount: number;        // WAKATI en attente d'envoi on-chain
-  pendingCount: number;
-  oldestPendingDays: number | null;
   burnedLast30: number;
   treasuryWakati: number | null;
   error?: string;
@@ -61,8 +58,6 @@ export async function loadBurns(now = Date.now()): Promise<BurnsReport> {
 
   const burns: Burn[] = burnRes.rows.map((b) => ({ id: String(b.id), asset_symbol: String(b.asset_symbol), amount: Number(b.amount), reason: b.reason ?? null, status: String(b.status), tx_hash: b.tx_hash ?? null, source: String(b.source), created_at: String(b.created_at) }));
   const runs: BurnRun[] = runRes.rows.map((r) => ({ id: String(r.id), run_at: String(r.run_at), status: String(r.status), priceUsd: r.wakati_price_usd == null ? null : Number(r.wakati_price_usd), newDueUsd: Number(r.new_due_usd || 0), burnWakati: Number(r.burn_wakati || 0), carriedOutUsd: Number(r.carried_out_usd || 0), note: r.note ?? null }));
-  const pending = burns.filter((b) => b.status === "pending_onchain");
-  const oldest = pending.length ? Math.max(...pending.map((b) => (now - new Date(b.created_at).getTime()) / 86_400_000)) : null;
 
   const s = setRes.rows[0];
   const st = (statusRes.data ?? null) as { active?: boolean; wakati_price_fcfa?: number | null; wakati_price_usd?: number | string | null; fcfa_price_usd?: number | string | null } | null;
@@ -99,9 +94,6 @@ export async function loadBurns(now = Date.now()): Promise<BurnsReport> {
     reserve,
     reserveUsd: resRes.rows[0] ? Number(resRes.rows[0].reserve_usd) : null,
     totalBurned: burns.reduce((sum, b) => sum + b.amount, 0),
-    pendingAmount: pending.reduce((sum, b) => sum + b.amount, 0),
-    pendingCount: pending.length,
-    oldestPendingDays: oldest,
     burnedLast30: burns.filter((b) => now - new Date(b.created_at).getTime() <= 30 * 86_400_000).reduce((sum, b) => sum + b.amount, 0),
     treasuryWakati: walletRes.rows[0] ? Number(walletRes.rows[0].balance) : null,
     error: [burnRes.error, runRes.error, setRes.error, resRes.error, walletRes.error, statusRes.error?.message].filter(Boolean).join(" · ") || undefined

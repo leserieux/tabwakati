@@ -24,7 +24,8 @@ export const NAV: NavEntry[] = [
   ] },
   { key: "markets", label: "Marchés & analytics", icon: "price", href: "/dashboard/markets", tabs: [
     { href: "/dashboard/markets", label: "Marchés" },
-    { href: "/dashboard/analytics", label: "Analytics plateforme" }
+    { href: "/dashboard/analytics", label: "Analytics plateforme" },
+    { href: "/dashboard/analytics/cohortes", label: "Cohortes & LTV" }
   ] },
   { key: "products", label: "Produits", icon: "percent", href: "/dashboard/credit", tabs: [
     { href: "/dashboard/credit", label: "Crédit" },

@@ -10,7 +10,8 @@ export async function loadControls(): Promise<ControlsReport> {
   try {
     const { data, error } = await getSupabaseAdmin().rpc("admin_run_controls");
     if (error) return { ...empty, error: error.message };
-    const controls = ((data as Control[]) || []);
+    // Le burn WAKATI est 100 % comptable : on masque l'ancien contrôle « Burns envoyés on-chain ».
+    const controls = ((data as Control[]) || []).filter((c) => c.check_key !== "burn_pending_onchain");
     const count = (s: ControlStatus) => controls.filter((c) => c.status === s).length;
     return { controls, ok: count("ok"), warn: count("warn"), bad: count("bad"), info: count("info") };
   } catch (e: any) {

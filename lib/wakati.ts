@@ -1,10 +1,6 @@
 import { cache } from "react";
 import { getSupabaseAdmin, q, fetchAll } from "@/lib/data";
-import { getTokenBalance, getTokenTotalSupply } from "@/lib/chain";
 
-export const EXPLORER = "https://polygonscan.com";
-const DEAD = "0x000000000000000000000000000000000000dEaD";
-const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
 
 export interface Holder {
   userId: string;
@@ -25,14 +21,12 @@ export interface WakatiData {
   inApp: { total: number; available: number; staking: number; pending: number; holders: number };
   pool: { name: string; apr: number; minStake: number; totalStaked: number; rewardsDistributed: number; pendingRewards: number; stakers: number; isActive: boolean } | null;
   flows: { tx: { type: string; count: number; total: number }[]; fees: { type: string; count: number; total: number }[]; days: number };
-  chain: { totalSupply: number | null; treasury: number | null; burned: number | null; error?: string };
-  // Valeurs dérivées
-  external: number | null; // tokens hors trésorerie et non brûlés (portefeuilles externes)
-  freeReserve: number | null; // trésorerie on-chain moins ce qui est dû en app
-  underCovered: boolean;
-  circulating: number | null;
-  marketCap: number | null;
-  fdv: number | null;
+  // Valeurs dérivées (100 % in-app : aucune lecture blockchain)
+  stock: number;       // stock interne de la plateforme (treasury_wallets)
+  supply: number;      // offre in-app = soldes utilisateurs + stock interne
+  circulating: number; // WAKATI chez les utilisateurs
+  marketCap: number;   // circulation × prix interne
+  fdv: number;         // offre in-app × prix interne
   errors: string[];
 }
 
@@ -119,36 +113,16 @@ export const loadWakati = cache(async (): Promise<WakatiData> => {
     fees: ((fl.fees || []) as any[]).map((t) => ({ type: t.type as string, count: Number(t.count), total: Number(t.total) }))
   };
 
-  // Lectures on-chain (offre totale, trésorerie, adresse de burn)
-  const chain: WakatiData["chain"] = { totalSupply: null, treasury: null, burned: null };
-  if (asset?.contract) {
-    const net = asset.network.toLowerCase();
-    const [ts, tr, bu] = await Promise.allSettled([
-      getTokenTotalSupply(net, asset.contract, asset.decimals),
-      TREASURY_EVM_ADDRESS ? getTokenBalance(net, asset.contract, TREASURY_EVM_ADDRESS, asset.decimals) : Promise.reject(new Error("TREASURY_EVM_ADDRESS non configurée")),
-      getTokenBalance(net, asset.contract, DEAD, asset.decimals)
-    ]);
-    if (ts.status === "fulfilled") chain.totalSupply = ts.value;
-    if (tr.status === "fulfilled") chain.treasury = tr.value;
-    if (bu.status === "fulfilled") chain.burned = bu.value;
-    const fail = [ts, tr, bu].find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
-    if (fail) chain.error = String(fail.reason?.message || fail.reason);
-  } else {
-    chain.error = "Adresse du contrat introuvable";
-  }
-
   const price = priceR.rows[0] ? Number(priceR.rows[0].price_usd) : 0;
   const change24h = priceR.rows[0] ? Number(priceR.rows[0].change_24h || 0) : 0;
 
-  const { totalSupply, treasury, burned } = chain;
-  const external = totalSupply !== null && treasury !== null && burned !== null ? Math.max(totalSupply - treasury - burned, 0) : null;
-  const freeReserve = treasury !== null ? Math.max(treasury - inApp.total, 0) : null;
-  const underCovered = treasury !== null ? treasury < inApp.total - 0.00000001 : false;
-  const circulating = external !== null ? inApp.total + external : null;
-  const marketCap = circulating !== null ? circulating * price : null;
-  const fdv = totalSupply !== null ? (totalSupply - (burned ?? 0)) * price : null;
+  const stock = wallet?.balance ?? 0;
+  const supply = inApp.total + stock;
+  const circulating = inApp.total;
+  const marketCap = circulating * price;
+  const fdv = supply * price;
 
-  return { asset, price, change24h, state, history, wallet, holders, inApp, pool, flows, chain, external, freeReserve, underCovered, circulating, marketCap, fdv, errors };
+  return { asset, price, change24h, state, history, wallet, holders, inApp, pool, flows, stock, supply, circulating, marketCap, fdv, errors };
 });
 
 /** WAKATI côté plateforme uniquement (soldes des utilisateurs dans l'appli). Aucune lecture blockchain. */
