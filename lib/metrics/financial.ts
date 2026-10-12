@@ -14,7 +14,7 @@ const CATS: Record<CatKey, { label: string; sign: 1 | -1; hint: string }> = {
   game_wins: { label: "Gains payés aux joueurs", sign: -1, hint: "Inclut les gains des tours gratuits et du jackpot" },
   staking: { label: "Récompenses de staking", sign: -1, hint: "Versées aux utilisateurs qui stakent" },
   referral: { label: "Bonus de parrainage", sign: -1, hint: "Versés aux parrains" },
-  defaults: { label: "Prêts score en défaut", sign: -1, hint: "Montant non remboursé. Les prêts liquidés ne sont pas inclus." },
+  defaults: { label: "Prêts score en défaut", sign: -1, hint: "Montant en défaut moins les sommes recouvrées ensuite. Les prêts liquidés ne sont pas inclus." },
 };
 
 const TX_CAT: Record<string, CatKey> = {
@@ -23,7 +23,11 @@ const TX_CAT: Record<string, CatKey> = {
   staking_reward: "staking",
   referral_bonus: "referral",
   score_loan_defaulted: "defaults",
+  score_loan_debt_recovered: "defaults",
 };
+
+/** Types qui annulent (en partie) une catégorie : un défaut recouvré n'est plus une perte. */
+const REVERSAL_TYPES = new Set(["score_loan_debt_recovered"]);
 
 interface Event {
   cat: CatKey;
@@ -31,6 +35,8 @@ interface Event {
   amount: number;
   ts: number;
   usd: number;
+  /** +1 : événement de la catégorie ; -1 : annulation (ex. défaut recouvré). */
+  dir: 1 | -1;
 }
 
 function emptyTotals() {
@@ -47,10 +53,10 @@ function aggregate(events: Event[], from: number, to: number) {
     if (e.ts < from || e.ts >= to) continue;
     const sign = CATS[e.cat].sign;
     const c = totals.byCat[e.cat];
-    const signed = sign * e.usd;
+    const signed = sign * e.dir * e.usd;
     c.usd += signed;
-    c.count += 1;
-    c.native.set(e.asset, (c.native.get(e.asset) ?? 0) + e.amount);
+    c.count += e.dir;
+    c.native.set(e.asset, (c.native.get(e.asset) ?? 0) + e.dir * e.amount);
     if (e.asset === WAKATI) {
       c.wakati += signed;
       totals.wakatiTotal += signed;
@@ -108,7 +114,10 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     if (isValidPrice(p)) wakatiDaily.set(String(h.computed_for_date).slice(0, 10), p);
   }
   const wakatiNow = prices.get(WAKATI) ?? null;
-  const wakatiPeak = wakatiDaily.size ? Math.max(...wakatiDaily.values()) : null;
+  // Pic sur les 31 derniers jours uniquement (le texte du signal l'annonce ainsi).
+  const peakFrom = new Date(now - 31 * DAY).toISOString().slice(0, 10);
+  const recentWakati = [...wakatiDaily.entries()].filter(([day]) => day >= peakFrom).map(([, price]) => price);
+  const wakatiPeak = recentWakati.length ? Math.max(...recentWakati) : null;
 
   const unpriced = new Set<string>();
   const priceAt = (asset: string, ts: number): number | null => {
@@ -121,16 +130,16 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
   };
 
   const events: Event[] = [];
-  const push = (cat: CatKey, asset: string, amount: number, ts: number) => {
+  const push = (cat: CatKey, asset: string, amount: number, ts: number, dir: 1 | -1 = 1) => {
     if (!Number.isFinite(amount) || amount <= 0) return;
     const p = priceAt(asset, ts);
     if (p === null) unpriced.add(asset);
-    events.push({ cat, asset, amount, ts, usd: p === null ? 0 : amount * p });
+    events.push({ cat, asset, amount, ts, usd: p === null ? 0 : amount * p, dir });
   };
 
   for (const r of tx.rows) {
     const cat = TX_CAT[r.type];
-    if (cat) push(cat, String(r.asset_symbol), Number(r.amount), new Date(r.created_at).getTime());
+    if (cat) push(cat, String(r.asset_symbol), Number(r.amount), new Date(r.created_at).getTime(), REVERSAL_TYPES.has(r.type) ? -1 : 1);
   }
   for (const r of fees.rows) {
     push("fees", String(r.asset_symbol), Number(r.amount), new Date(r.collected_at).getTime());
@@ -237,16 +246,16 @@ export async function loadFinancialMetrics(options: { period?: number } = {}): P
     }
   }
 
-  if (current.byCat.defaults.count > 0) {
+  if (current.byCat.defaults.count > 0 && current.byCat.defaults.usd < 0) {
     signals.push({
       tone: "info",
-      title: `${current.byCat.defaults.count} prêt(s) score en défaut sur la période`,
-      detail: `Montant non remboursé : ${f(-current.byCat.defaults.usd)}. Les prêts liquidés ne sont pas dans ce total.`,
+      title: `${current.byCat.defaults.count} prêt(s) score en défaut non recouvré(s) sur la période`,
+      detail: `Montant non remboursé (après recouvrements) : ${f(-current.byCat.defaults.usd)}. Les prêts liquidés ne sont pas dans ce total.`,
     });
   }
 
   const tw = treasury.find((w) => w.asset === WAKATI);
-  const wakatiIn = events.filter((e) => e.asset === WAKATI && e.ts >= now - 30 * DAY).reduce((s, e) => s + CATS[e.cat].sign * e.amount, 0);
+  const wakatiIn = events.filter((e) => e.asset === WAKATI && e.ts >= now - 30 * DAY).reduce((s, e) => s + CATS[e.cat].sign * e.dir * e.amount, 0);
   if (tw && wakatiIn < 0) {
     const days = tw.balance / (-wakatiIn / 30);
     signals.push({
