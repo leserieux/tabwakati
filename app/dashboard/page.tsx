@@ -1,6 +1,7 @@
 import { getSupabaseAdmin, q, loadPrices } from "@/lib/data";
 import { loadUserAssetSummaries } from "@/lib/assets";
 import { computeCoverage, isValidPrice } from "@/lib/valuation";
+import { loadSolvencyLines } from "@/lib/solvency";
 import { loadPnl } from "@/lib/pnl";
 import { loadControls } from "@/lib/controls";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatNumber, formatUsd, formatPct, shortId } from "@/lib/format";
@@ -70,18 +71,21 @@ export default async function DashboardOverviewPage() {
   const failedCount = failed.count || 0;
   const priceOf = (asset: string) => prices.get(asset) ?? null;
 
-  const walletByAsset = new Map(wallets.rows.map((row) => [String(row.asset_symbol), Number(row.balance || 0)]));
-  const liabByAsset = new Map(liabilities.rows.map((row) => [String(row.asset_symbol), Number(row.total_liability || 0)]));
-  // Couverture actif par actif sur l'union (réserves + passifs), avec la table de prix COMPLÈTE.
-  const allSymbols = [...new Set([...walletByAsset.keys(), ...liabByAsset.keys()])];
-  const cov = computeCoverage(allSymbols.map((asset) => ({ asset, owed: liabByAsset.get(asset) || 0, held: walletByAsset.get(asset) || 0, price: priceOf(asset) })));
+  // « Détenu » = custody RÉELLE (on-chain + PawaPay), comme la page Solvabilité.
+  // (treasury_wallets est le registre interne des réserves de swap : ce n'est pas ce qui couvre les utilisateurs.)
+  const sol = await loadSolvencyLines(prices);
+  const solLines = [...sol.crypto, ...sol.mobile];
+  const cov = computeCoverage(solLines.filter((l) => l.have !== null).map((l) => ({ asset: l.asset, owed: l.owe, held: l.have as number, price: l.priceUsd })));
+  const solUnreadable = solLines.filter((l) => l.have === null).map((l) => l.asset);
   const { heldUsd, owedUsd, missingUsd, unpriced } = cov;
-  const coveragePct = Number.isNaN(cov.coveragePct) ? null : cov.coveragePct;
+  const coveragePct = sol.error || Number.isNaN(cov.coveragePct) ? null : cov.coveragePct;
   const feeRows = (((fees.data as any[]) || []) as any[]).map((row) => { const asset = String(row.asset_symbol); const total = Number(row.total_fees || 0); const price = priceOf(asset); return { asset, total, usd: isValidPrice(price) ? total * price : null }; }).sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1));
   const feesUsd = feeRows.reduce((sum, row) => sum + (row.usd ?? 0), 0);
   const feesUnpriced = feeRows.filter((row) => row.usd === null && row.total > 0).map((row) => row.asset);
   const alerts: Alert[] = [];
   if (missingUsd > 0.01) alerts.push({ tone: "bad", text: `Il manque environ ${formatUsd(missingUsd)} pour couvrir les passifs valorisés.` });
+  if (sol.error) alerts.push({ tone: "bad", text: `Couverture non calculable : ${sol.error}.` });
+  if (solUnreadable.length > 0) alerts.push({ tone: "warn", text: `Solde réel illisible pour : ${solUnreadable.join(", ")} (exclus de la couverture). Voir Solvabilité.` });
   if (unpriced.length > 0) alerts.push({ tone: "warn", text: `Sans prix valide (exclus de la valorisation) : ${unpriced.join(", ")}.` });
   const badControls = controls.controls.filter((c) => c.status === "bad");
   const warnControls = controls.controls.filter((c) => c.status === "warn");

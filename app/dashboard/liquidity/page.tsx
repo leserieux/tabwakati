@@ -222,7 +222,8 @@ export default async function LiquidityPage({
   );
   const { heldUsd, owedUsd } = cov;
   const coverage = Number.isNaN(cov.coveragePct) ? 1 : cov.coveragePct / 100;
-  const missingUsd = short.reduce((n, l) => n + (l.priceUsd !== null ? -(gap(l) ?? 0) * l.priceUsd : 0), 0);
+  // Inclut aussi les écarts « mineurs » (même valeur que la Vue d'ensemble).
+  const missingUsd = cov.missingUsd;
 
   const todo: { tone: "bad" | "warn"; text: string }[] = [];
   for (const l of absent) todo.push({ tone: "bad", text: `${l.asset} : réserve de swap jamais initialisée — les swaps vers cet actif échoueront.` });
@@ -239,7 +240,9 @@ export default async function LiquidityPage({
         ? { tone: "bad" as const, icon: "alert" as const, title: missingUsd > 0 ? `Il manque environ ${formatUsd(missingUsd)} pour couvrir les réserves de swap` : "Certaines réserves de swap posent problème", text: "Voir « À faire » ci-dessous." }
         : errored.length > 0
           ? { tone: "warn" as const, icon: "alert" as const, title: "Certaines lectures ont échoué", text: "Le reste est couvert." }
-          : { tone: "ok" as const, icon: "check" as const, title: "Toutes les réserves de swap sont couvertes", text: minor.length > 0 || dry.length > 0 ? `À surveiller : ${[...minor, ...dry].map((l) => l.asset).join(", ")}.` : "" };
+          : minor.length > 0
+            ? { tone: "warn" as const, icon: "alert" as const, title: "Réserves de swap presque couvertes", text: `Il manque environ ${formatUsd(missingUsd)} sur ${minor.map((l) => l.asset).join(", ")} (écarts de moins de ${formatUsd(MINOR_USD)} chacun). Chaque actif est comparé séparément.${dry.length > 0 ? ` À sec : ${dry.map((l) => l.asset).join(", ")}.` : ""}` }
+            : { tone: "ok" as const, icon: "check" as const, title: "Toutes les réserves de swap sont couvertes", text: dry.length > 0 ? `À surveiller : ${dry.map((l) => l.asset).join(", ")}.` : "" };
 
   return (
     <div>

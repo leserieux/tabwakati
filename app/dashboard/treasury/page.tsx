@@ -1,142 +1,15 @@
-import { getSupabaseAdmin, loadPrices } from "@/lib/data";
+import { loadPrices } from "@/lib/data";
 import { computeCoverage } from "@/lib/valuation";
-import { loadOnchainCustody } from "@/lib/custody";
-import { fetchPawapayWallets } from "@/lib/pawapay";
 import { loadWakatiInApp } from "@/lib/wakati";
+import { loadSolvencyLines, MINOR_USD, EPS, type Line, type Status } from "@/lib/solvency";
 import { formatNumber, formatToken, formatCompactNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, Icon, SegmentBar, Swatch, SEG } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Tokens gérés en interne : aucune réserve à couvrir ici
-const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
-const EPS = 0.00000001;
-
-type Liab = { total: number; count: number };
-type Status = "covered" | "minor" | "short" | "sweep" | "error";
-
-/** Une ligne = un actif : ce que j'ai, ce que je dois, le résultat. */
-interface Line {
-  asset: string;
-  label: string; // ex. "BNB (BSC)"
-  have: number | null;
-  owe: number;
-  note?: string; // ex. "dont 2 sur les adresses des utilisateurs"
-  status: Status;
-  priceUsd: number | null;
-  error?: string;
-  details?: { label: string; value: number }[];
-}
-
-// ─────────────────────────── Chargement des données ───────────────────────────
-
-async function loadLiabilities(): Promise<Map<string, Liab>> {
-  const { data, error } = await getSupabaseAdmin().rpc("get_asset_liabilities");
-  if (error) throw new Error(`Impossible de lire ce qui est dû aux utilisateurs (${error.message})`);
-  const map = new Map<string, Liab>();
-  for (const l of (data as any[]) || []) {
-    map.set(l.asset_symbol, { total: Number(l.total_liability), count: Number(l.user_count) });
-  }
-  return map;
-}
-
-function computeStatus(have: number | null, owe: number, treasuryOnly: number | null): Status {
-  if (have === null) return "error";
-  if (have < owe - EPS) return "short";
-  if (treasuryOnly !== null && treasuryOnly < owe - EPS) return "sweep";
-  return "covered";
-}
-
-async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[] }> {
-  const db = getSupabaseAdmin();
-  const { data: assets, error: assetsError } = await db
-    .from("supported_assets")
-    .select("symbol, network, contract_address, decimals")
-    .neq("network", "Fiat")
-    .eq("is_active", true);
-  if (assetsError) throw new Error(`Impossible de lire les actifs (${assetsError.message})`);
-
-  const toRead = (assets || []).filter((a) => {
-    const l = liab.get(a.symbol) || { total: 0, count: 0 };
-    if (INTERNAL_ONLY_ASSETS.has(a.symbol)) return false; // WAKATI : section dédiée plus bas
-    return !(l.total === 0 && l.count === 0);
-  });
-
-  const custody = await loadOnchainCustody(toRead);
-
-  const lines: Line[] = toRead.map((asset) => {
-    const owe = liab.get(asset.symbol)?.total ?? 0;
-    const c = custody.get(asset.symbol);
-    const treasury = c?.treasury ?? null;
-    const users = c?.users ?? 0;
-    const usersFailed = c?.usersFailed ?? 0;
-    const have = c?.total ?? null;
-
-    const noteParts: string[] = [];
-    if (users > EPS) noteParts.push(`dont ${formatNumber(users)} encore sur les adresses des utilisateurs`);
-    if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
-
-    return {
-      asset: asset.symbol,
-      label: `${asset.symbol} (${asset.network})`,
-      have,
-      owe,
-      note: noteParts.join(" · ") || undefined,
-      status: computeStatus(have, owe, treasury),
-      priceUsd: prices.get(asset.symbol) ?? null,
-      error: c?.error
-    };
-  });
-
-  lines.sort((a, b) => a.asset.localeCompare(b.asset));
-
-  return { lines };
-}
-
-async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; error?: string }> {
-  const { data: countries, error } = await getSupabaseAdmin()
-    .from("payment_countries")
-    .select("iso_code, currency_code, wallet_asset_symbol")
-    .eq("is_active", true);
-  if (error) throw new Error(`Impossible de lire les pays (${error.message})`);
-
-  const { wallets, error: pawapayError } = await fetchPawapayWallets();
-
-  const byAsset = new Map<string, { iso: string; currency: string }[]>();
-  for (const c of countries || []) {
-    const list = byAsset.get(c.wallet_asset_symbol) || [];
-    list.push({ iso: String(c.iso_code).toUpperCase(), currency: c.currency_code });
-    byAsset.set(c.wallet_asset_symbol, list);
-  }
-
-  const lines: Line[] = [];
-  for (const [asset, list] of byAsset) {
-    const owe = liab.get(asset)?.total ?? 0;
-    const details = list.map((c) => ({
-      label: `${c.iso} (${c.currency})`,
-      value: wallets.filter((w) => w.country === c.iso).reduce((n, w) => n + w.balance, 0)
-    }));
-    const have = pawapayError ? null : details.reduce((n, d) => n + d.value, 0);
-    lines.push({
-      asset,
-      label: `${asset} (PawaPay)`,
-      have,
-      owe,
-      status: computeStatus(have, owe, null),
-      priceUsd: prices.get(asset) ?? null,
-      error: pawapayError,
-      details
-    });
-  }
-  lines.sort((a, b) => a.asset.localeCompare(b.asset));
-  // On masque un actif sans rien de dû ni de détenu (ex. un pays pas encore utilisé)
-  return { lines: lines.filter((l) => l.owe > EPS || (l.have ?? 0) > EPS), error: pawapayError };
-}
-
 // ─────────────────────────────────── Page ───────────────────────────────────
 
-const MINOR_USD = 1; // en dessous, un manque est signalé « mineur »
 
 function gap(l: Line): number | null {
   return l.have === null ? null : l.have - l.owe;
@@ -159,29 +32,9 @@ function usd(l: Line, amount: number): string {
 }
 
 export default async function SolvencyPage() {
-  let crypto: Line[] = [];
-  let mobile: Line[] = [];
-  let loadError: string | null = null;
-
   const prices = await loadPrices();
   const wk = await loadWakatiInApp();
-  try {
-    const liab = await loadLiabilities();
-    const [c, m] = await Promise.all([loadCrypto(liab, prices), loadMobileMoney(liab, prices)]);
-    crypto = c.lines;
-    mobile = m.lines;
-  } catch (e: any) {
-    loadError = e?.message || "Erreur de chargement";
-  }
-
-  // Un manque de moins de 1 $ est « mineur » (poussière) et ne déclenche pas l'alerte rouge
-  const classify = (l: Line): Line => {
-    const g = gap(l);
-    if (l.status === "short" && g !== null && l.priceUsd !== null && Math.abs(g * l.priceUsd) < MINOR_USD) return { ...l, status: "minor" };
-    return l;
-  };
-  crypto = crypto.map(classify);
-  mobile = mobile.map(classify);
+  const { crypto, mobile, error: loadError } = await loadSolvencyLines(prices);
 
   const all = [...crypto, ...mobile];
   const short = all.filter((l) => l.status === "short");
@@ -197,7 +50,8 @@ export default async function SolvencyPage() {
   const held = cov.heldUsd;
   const owed = cov.owedUsd;
   const coverage = Number.isNaN(cov.coveragePct) ? 1 : cov.coveragePct / 100;
-  const missingUsd = short.reduce((n, l) => n + (l.priceUsd !== null ? -(gap(l) ?? 0) * l.priceUsd : 0), 0);
+  // Même valeur que la Vue d'ensemble : inclut aussi les écarts « mineurs », sinon 99 % de couverture s'afficherait avec « 0 $ manquant ».
+  const missingUsd = cov.missingUsd;
 
   // Actions concrètes, en français simple
   const todo: { tone: "bad" | "warn" | "info"; text: string }[] = [];
@@ -227,7 +81,9 @@ export default async function SolvencyPage() {
         ? { tone: "bad" as const, icon: "alert" as const, title: missingUsd > 0 ? `Il manque environ ${formatUsd(missingUsd)} pour couvrir tout le monde` : "Certains actifs ne sont pas couverts", text: "Les lignes en rouge ci-dessous indiquent quoi approvisionner." }
         : errors.length > 0
           ? { tone: "warn" as const, icon: "alert" as const, title: "Certaines lectures ont échoué", text: minor.length > 0 ? "Les autres actifs sont couverts ou n'ont qu'un écart mineur, mais tous les soldes n'ont pas pu être vérifiés." : "Les autres actifs sont couverts, mais tous les soldes n'ont pas pu être vérifiés." }
-          : { tone: "ok" as const, icon: "check" as const, title: "Tout est couvert", text: minor.length > 0 ? `Écarts mineurs (moins de ${formatUsd(MINOR_USD)}) sur ${minor.map((l) => l.asset).join(", ")}.` : "Tu détiens assez pour rembourser tous les utilisateurs." };
+          : minor.length > 0
+            ? { tone: "warn" as const, icon: "alert" as const, title: "Presque tout est couvert", text: `Il manque environ ${formatUsd(missingUsd)} sur ${minor.map((l) => l.asset).join(", ")} (écarts de moins de ${formatUsd(MINOR_USD)} chacun). Un surplus sur un autre actif ne compense pas ce manque : chaque actif est comparé séparément.` }
+            : { tone: "ok" as const, icon: "check" as const, title: "Tout est couvert", text: "Tu détiens assez de chaque actif pour rembourser tous les utilisateurs." };
 
   return (
     <div>
@@ -247,7 +103,7 @@ export default async function SolvencyPage() {
           {owed > 0 && (
             <div className="wk-figures">
               <div className="wk-figure">
-                <div className="wk-figure-label">Détenu</div>
+                <div className="wk-figure-label">Détenu (total, surplus inclus)</div>
                 <div className="wk-figure-value">{formatUsd(held)}</div>
               </div>
               <div className="wk-figure">
@@ -255,7 +111,7 @@ export default async function SolvencyPage() {
                 <div className="wk-figure-value">{formatUsd(owed)}</div>
               </div>
               <div className="wk-figure">
-                <div className="wk-figure-label">Dû couvert</div>
+                <div className="wk-figure-label">Dû couvert (actif par actif)</div>
                 <div className="wk-figure-value">{formatPct(coverage * 100)}</div>
               </div>
             </div>
