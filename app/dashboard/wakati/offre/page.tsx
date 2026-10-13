@@ -52,7 +52,7 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
   const [w, burns, em] = await Promise.all([loadWakati(), loadBurns(), loadEmission()]);
   const cfg = em.settings;
   const f90 = await loadFlows(cfg.runwayWindowDays);
-  const { chain, inApp, wallet } = w;
+  const { inApp, wallet } = w;
 
   // Plafond propre à l'application (Burns > Réglages). Vide = automatique : WAKATI chez les utilisateurs + trésorerie interne.
   // Ce n'est pas l'offre de la blockchain.
@@ -81,7 +81,6 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
   const modeLabel = !cfg.enabled ? "Désactivé" : cfg.enforce ? "Appliqué" : "Surveillance seule";
   const modeTone = !cfg.enabled ? "warn" : cfg.enforce ? "ok" : "info";
 
-  const burnedOnchain = chain.burned ?? 0;
   const burnedBooked = wallet?.burned ?? 0;
   const rule = burns.rule;
 
@@ -123,8 +122,8 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Brûlé</div>
-          <div className="wk-strip-value">{formatCompactNumber(Math.max(burnedOnchain, burnedBooked))}</div>
-          <div className="wk-strip-sub">{burns.pendingCount > 0 ? `${formatToken(burns.pendingAmount)} à envoyer on-chain` : "cumul comptable ou on-chain"}</div>
+          <div className="wk-strip-value">{formatCompactNumber(burnedBooked)}</div>
+          <div className="wk-strip-sub">"cumul comptable (in-app)"</div>
         </div>
       </div>
 
@@ -277,7 +276,7 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
             <div className="wk-kv-row"><span>Offre totale (plafond)</span><span>{formatToken(cap)} WAKATI</span></div>
             <div className="wk-kv-row"><span>Part encore en trésorerie</span><span>{cap > 0 ? formatPct((treasury / cap) * 100, 1) : "—"}</span></div>
             <div className="wk-kv-row"><span>En circulation chez les utilisateurs</span><span>{formatToken(inApp.total)} ({cap > 0 ? formatPct((inApp.total / cap) * 100, 2) : "—"})</span></div>
-            <div className="wk-kv-row"><span>Brûlé à ce jour</span><span>{formatToken(Math.max(burnedOnchain, burnedBooked))} WAKATI</span></div>
+            <div className="wk-kv-row"><span>Brûlé à ce jour</span><span>{formatToken(burnedBooked)} WAKATI</span></div>
             <div className="wk-kv-row"><span>Émission nette moyenne</span><span>{formatToken(net90m)} WAKATI / mois</span></div>
             <div className="wk-kv-row"><span>Tenue de la trésorerie à ce rythme</span><span>{yearsText}</span></div>
             <div className="wk-kv-row"><span>Création de nouveaux jetons</span><span>Aucune par la plateforme</span></div>

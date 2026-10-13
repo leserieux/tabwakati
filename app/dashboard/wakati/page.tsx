@@ -23,31 +23,21 @@ function usd(n: number, price: number): string {
 
 export default async function TokenomicsPage() {
   const w = await loadWakati();
-  const { chain, inApp } = w;
-  const hasChain = chain.totalSupply !== null && chain.treasury !== null;
-  const total = hasChain ? (chain.totalSupply as number) : inApp.total;
+  const { inApp, wallet } = w;
+  const total = w.supply;
 
-  const segments = hasChain
-    ? [
-        { key: "reserve", label: "Réserve libre de la trésorerie", value: w.freeReserve ?? 0, color: SEG.reserve, desc: "Tokens de la trésorerie qui ne sont dus à aucun utilisateur." },
-        { key: "available", label: "Disponible en app", value: inApp.available, color: SEG.available, desc: "Tokens que les utilisateurs peuvent utiliser ou retirer." },
-        { key: "staking", label: "En staking", value: inApp.staking, color: SEG.staking, desc: "Tokens verrouillés dans le pool de staking." },
-        { key: "pending", label: "En attente", value: inApp.pending, color: SEG.pending, desc: "Tokens en cours de traitement." },
-        { key: "external", label: "Portefeuilles externes", value: w.external ?? 0, color: SEG.external, desc: "Tokens hors trésorerie, détenus sur la blockchain. Non suivis un par un." },
-        { key: "burned", label: "Brûlé", value: chain.burned ?? 0, color: SEG.burned, desc: "Envoyés à l'adresse de burn : définitivement retirés." }
-      ]
-    : [
-        { key: "available", label: "Disponible en app", value: inApp.available, color: SEG.available, desc: "Tokens que les utilisateurs peuvent utiliser ou retirer." },
-        { key: "staking", label: "En staking", value: inApp.staking, color: SEG.staking, desc: "Tokens verrouillés dans le pool de staking." },
-        { key: "pending", label: "En attente", value: inApp.pending, color: SEG.pending, desc: "Tokens en cours de traitement." }
-      ];
+  const segments = [
+    { key: "stock", label: "Stock interne de la plateforme", value: w.stock, color: SEG.reserve, desc: "WAKATI gardés par la plateforme (treasury_wallets), pas encore chez les utilisateurs." },
+    { key: "available", label: "Disponible en app", value: inApp.available, color: SEG.available, desc: "Tokens que les utilisateurs peuvent utiliser ou retirer." },
+    { key: "staking", label: "En staking", value: inApp.staking, color: SEG.staking, desc: "Tokens verrouillés dans le pool de staking." },
+    { key: "pending", label: "En attente", value: inApp.pending, color: SEG.pending, desc: "Tokens en cours de traitement." }
+  ];
 
-  const circulating = w.circulating ?? inApp.total;
+  const circulating = w.circulating;
   const circSegments = [
     { key: "available", label: "Disponible en app", value: inApp.available, color: SEG.available },
     { key: "staking", label: "En staking", value: inApp.staking, color: SEG.staking },
-    { key: "pending", label: "En attente", value: inApp.pending, color: SEG.pending },
-    ...(w.external ? [{ key: "external", label: "Portefeuilles externes", value: w.external, color: SEG.external }] : [])
+    { key: "pending", label: "En attente", value: inApp.pending, color: SEG.pending }
   ];
   const stakingRate = inApp.total > 0 ? inApp.staking / inApp.total : 0;
 
@@ -75,14 +65,14 @@ export default async function TokenomicsPage() {
 
       <div className="wk-strip">
         <div className="wk-strip-item">
-          <div className="wk-strip-label">Offre totale</div>
-          <div className="wk-strip-value">{hasChain ? formatCompactNumber(total) : "—"}</div>
-          <div className="wk-strip-sub">{hasChain ? "lue sur la blockchain" : chain.error || "lecture impossible"}</div>
+          <div className="wk-strip-label">Offre dans l'app</div>
+          <div className="wk-strip-value">{formatCompactNumber(total)}</div>
+          <div className="wk-strip-sub">utilisateurs + stock interne</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">En circulation</div>
           <div className="wk-strip-value">{formatCompactNumber(circulating)}</div>
-          <div className="wk-strip-sub">{hasChain && total > 0 ? `${formatPct((circulating / total) * 100, 2)} de l'offre` : "en app uniquement"}</div>
+          <div className="wk-strip-sub">{total > 0 ? `${formatPct((circulating / total) * 100, 2)} de l'offre in-app` : "en app uniquement"}</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Capitalisation</div>
@@ -91,12 +81,12 @@ export default async function TokenomicsPage() {
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Valeur totalement diluée</div>
-          <div className="wk-strip-value">{w.fdv !== null ? formatCompactUsd(w.fdv) : "—"}</div>
-          <div className="wk-strip-sub">offre totale × prix interne</div>
+          <div className="wk-strip-value">{formatCompactUsd(w.fdv)}</div>
+          <div className="wk-strip-sub">offre in-app × prix interne</div>
         </div>
       </div>
 
-      <Section title="Répartition de l'offre" hint="Où se trouvent tous les WAKATI qui existent. « En app » veut dire suivi par ta base ; le reste se lit sur la blockchain.">
+      <Section title="Répartition de l'offre" hint="Où se trouvent les WAKATI de l'application : chez les utilisateurs ou dans le stock interne de la plateforme.">
         <div className="wk-panel">
           <SegmentBar segments={segments} label="Répartition de l'offre totale" />
         </div>
@@ -130,7 +120,7 @@ export default async function TokenomicsPage() {
         </div>
       </Section>
 
-      <Section title="Ce qui est en circulation" hint="La part de l'offre qui est réellement entre les mains des utilisateurs, hors réserve de la trésorerie.">
+      <Section title="Ce qui est en circulation" hint="La part de l'offre qui est entre les mains des utilisateurs, hors stock interne de la plateforme.">
         <div className="wk-panel">
           <SegmentBar segments={circSegments} label="Répartition de la circulation" />
           <div className="wk-kv" style={{ marginTop: 18 }}>
@@ -150,21 +140,17 @@ export default async function TokenomicsPage() {
         </div>
       </Section>
 
-      <Section title="Couverture par la trésorerie" hint="Les WAKATI que les utilisateurs voient dans l'appli doivent exister en réserve sur la blockchain.">
-        {chain.treasury === null ? (
-          <div className="wk-callout wk-callout-bad">Impossible de lire la trésorerie on-chain{chain.error ? ` (${chain.error})` : ""}.</div>
+      <Section title="Stock interne de la plateforme" hint="Ce que la plateforme garde en interne (treasury_wallets). Lecture de la base uniquement : rien n'est lu sur la blockchain.">
+        {wallet === null ? (
+          <Empty text="Aucun stock WAKATI enregistré." />
         ) : (
-          <div className={`wk-callout ${w.underCovered ? "wk-callout-bad" : "wk-callout-ok"}`}>
-            {w.underCovered ? (
-              <>
-                <strong>La trésorerie ne couvre pas les soldes en app.</strong> Elle détient {formatToken(chain.treasury)} WAKATI pour {formatToken(inApp.total)} dus aux utilisateurs.
-              </>
-            ) : (
-              <>
-                <strong>Couvert.</strong> La trésorerie détient {formatToken(chain.treasury)} WAKATI sur la blockchain, pour {formatToken(inApp.total)} dus aux utilisateurs
-                {inApp.total > 0 ? ` (soit environ ${formatToken(Math.round(chain.treasury / inApp.total))} fois ce qui est dû).` : "."}
-              </>
-            )}
+          <div className="wk-panel">
+            <div className="wk-kv">
+              <div className="wk-kv-row"><span>Stock actuel</span><span>{formatToken(wallet.balance)} WAKATI</span></div>
+              <div className="wk-kv-row"><span>Total collecté</span><span>{formatToken(wallet.collected)} WAKATI</span></div>
+              <div className="wk-kv-row"><span>Total retiré</span><span>{formatToken(wallet.withdrawn)} WAKATI</span></div>
+              <div className="wk-kv-row"><span>Brûlé (comptable)</span><span>{formatToken(wallet.burned)} WAKATI</span></div>
+            </div>
           </div>
         )}
       </Section>

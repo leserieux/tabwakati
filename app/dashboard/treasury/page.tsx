@@ -153,7 +153,7 @@ export default async function SolvencyPage() {
         <LinesTable lines={mobile} empty="Aucun pays actif." />
       </Section>
 
-      <Section title="WAKATI dans l'application" hint="Tout ce que ta plateforme suit en interne : le stock qu'elle garde et les soldes de tes utilisateurs. Les WAKATI sur la blockchain se voient dans le menu WAKATI.">
+      <Section title="WAKATI dans l'application" hint="Tout ce que ta plateforme suit en interne : le stock qu'elle garde et les soldes de tes utilisateurs.">
         <WakatiInAppBlock wk={wk} />
       </Section>
     </div>
@@ -343,7 +343,7 @@ function WakatiInAppBlock({ wk }: { wk: Awaited<ReturnType<typeof loadWakatiInAp
       </div>
 
       <p style={{ margin: "12px 0 0", fontSize: 14 }}>
-        <a className="wk-link" href="/dashboard/wakati">Voir la tokenomics complète (blockchain, prix, staking, détenteurs)</a>
+        <a className="wk-link" href="/dashboard/wakati">Voir la tokenomics complète (prix, staking, détenteurs)</a>
       </p>
     </>
   );

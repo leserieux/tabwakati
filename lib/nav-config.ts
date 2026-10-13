@@ -12,7 +12,8 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/pnl", label: "Résultat" },
     { href: "/dashboard/pnl/depots", label: "Dépôts" },
     { href: "/dashboard/pnl/roue", label: "Roue" },
-    { href: "/dashboard/pnl/utilisateurs", label: "Rentabilité" }
+    { href: "/dashboard/pnl/utilisateurs", label: "Rentabilité" },
+    { href: "/dashboard/pnl/acquisition", label: "Acquisition" }
   ] },
   { key: "users", label: "Utilisateurs", icon: "users", href: "/dashboard/users" },
   { key: "transactions", label: "Transactions", icon: "log", href: "/dashboard/transactions" },

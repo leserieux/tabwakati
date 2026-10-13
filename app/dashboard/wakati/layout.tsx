@@ -1,5 +1,5 @@
-import { loadWakati, EXPLORER } from "@/lib/wakati";
-import { formatPrice, formatPct, shortAddress, formatDateTime } from "@/lib/format";
+import { loadWakati } from "@/lib/wakati";
+import { formatPrice, formatPct, formatDateTime } from "@/lib/format";
 import { Pill, Icon } from "@/components/ui";
 import SectionTabs from "@/components/section-tabs";
 
@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 export default async function WakatiLayout({ children }: { children: React.ReactNode }) {
   const w = await loadWakati();
   const atFloor = w.state ? w.price <= w.state.floorUsd * 1.0001 : false;
-  const contract = w.asset?.contract || "";
 
   return (
     <div>
@@ -19,16 +18,11 @@ export default async function WakatiLayout({ children }: { children: React.React
         <div className="wk-token-id">
           <div className="wk-token-name">
             WAKATI
-            <span className="wk-token-net">{w.asset?.network ?? "Polygon"}</span>
+            <span className="wk-token-net">Jeton interne</span>
             {atFloor && <Pill tone="warn">Prix au plancher</Pill>}
           </div>
           <div className="wk-token-sub">
-            <span>Contrat {contract ? shortAddress(contract) : "introuvable"}</span>
-            {contract && (
-              <a className="wk-link" href={`${EXPLORER}/token/${contract}`} target="_blank" rel="noopener noreferrer">
-                Voir sur PolygonScan
-              </a>
-            )}
+            <span>Suivi uniquement dans l'application (aucune lecture blockchain)</span>
           </div>
         </div>
         <div className="wk-token-price">
