@@ -44,6 +44,7 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/controls", label: "Contrôles" },
     { href: "/dashboard/tasks", label: "Tâches" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
+    { href: "/dashboard/app", label: "App mobile" },
     { href: "/dashboard/settings", label: "Paramètres" }
   ] }
 ];
