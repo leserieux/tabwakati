@@ -2,6 +2,12 @@ import { getSupabaseAdmin, q } from "@/lib/data";
 import { formatNumber, formatUsd, formatCompactUsd, formatPct, formatDateTime, shortId } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, type Tone } from "@/components/ui";
 
+import { updateStakeLoanConfig, updateLendingCollateralConfig, updateLendingBorrowConfig, updateScoreCreditConfig } from "@/app/dashboard/settings/actions";
+import { Field, Toggle, SettingsCard, SettingsMessages } from "@/components/settings-form";
+
+const RETURN = "/dashboard/credit";
+type SettingsParams = { saved?: string; error?: string; msg?: string };
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -177,8 +183,19 @@ function guaranteedFlags(row: LoanRisk): Flag[] {
   return flags;
 }
 
-export default async function CreditPage() {
+export default async function CreditPage({ searchParams }: { searchParams: SettingsParams }) {
   const db = getSupabaseAdmin();
+  const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
+  // Réglages (éditables en bas de page)
+  const [stakeCfgRes, collRes, borrowRes, scoreCfgRes] = await Promise.all([
+    q<any>(db.from("stake_loan_config").select("*").eq("id", 1).limit(1)),
+    q<any>(db.from("lending_collateral_config").select("*").eq("asset_symbol", "WAKATI").limit(1)),
+    q<any>(db.from("lending_borrow_config").select("*").order("asset_symbol")),
+    q<any>(db.from("score_credit_config").select("*").eq("id", 1).limit(1))
+  ]);
+  const sk = stakeCfgRes.rows[0];
+  const coll = collRes.rows[0];
+  const sc = scoreCfgRes.rows[0];
 
   const [summaryRes, activeRes, scoreRes, pairRes, closedRes, scoreConfigRes, stakeConfigRes] = await Promise.all([
     db.from("admin_credit_summary").select("*").maybeSingle(),
@@ -285,6 +302,7 @@ export default async function CreditPage() {
         subtitle="Trois produits : prêts sur staking WAKATI, prêts sur garantie wallet, micro-prêts sur score. Encours, échéances, risque de saisie et défauts."
         updatedAt={formatDateTime(new Date())}
       />
+      <SettingsMessages searchParams={searchParams} />
       <ErrorNote text={errors ? `Certaines données n'ont pas pu être lues : ${errors}` : null} />
 
       <div className="wk-strip">
@@ -460,7 +478,7 @@ export default async function CreditPage() {
         title="Micro-prêts sur score crédit"
         hint={
           scoreConfig
-            ? `Config actuelle : durée ${scoreConfig.loan_duration_days} j, grâce ${scoreConfig.grace_period_hours} h, plafond 1er prêt ${formatUsd(scoreConfig.first_loan_cap_usd)}, plafond absolu ${formatUsd(scoreConfig.max_absolute_cap_usd)}. Modifiable dans Paramètres.`
+            ? `Config actuelle : durée ${scoreConfig.loan_duration_days} j, grâce ${scoreConfig.grace_period_hours} h, plafond 1er prêt ${formatUsd(scoreConfig.first_loan_cap_usd)}, plafond absolu ${formatUsd(scoreConfig.max_absolute_cap_usd)}. Modifiable en bas de page, dans « Réglages des prêts ».`
             : undefined
         }
       >
@@ -536,6 +554,95 @@ export default async function CreditPage() {
             </div>
           </details>
         )}
+      </Section>
+
+      <Section
+        title="Réglages des prêts"
+        hint="S'appliquent aux nouveaux prêts : un prêt en cours garde le taux et le seuil de saisie de son ouverture. Chaque carte s'enregistre séparément et est tracée dans le journal d'audit."
+      >
+        {sk ? (
+          <SettingsCard
+            returnTo={RETURN}
+            title="Prêts sur staking — règles"
+            hint="Durée, délai de grâce, frais et plafond de dette. Le produit se coupe avec « Produit actif »."
+            updatedAt={fmtUpdated(sk.updated_at)}
+            action={updateStakeLoanConfig}
+          >
+            <Field label="Durée minimale (jours)" name="min_duration_days" step="1" defaultValue={sk.min_duration_days} />
+            <Field label="Durée maximale (jours)" name="max_duration_days" step="1" defaultValue={sk.max_duration_days} />
+            <Field label="Durée proposée par défaut (jours)" name="default_duration_days" step="1" defaultValue={sk.default_duration_days} hint="Doit rester entre la durée minimale et maximale." />
+            <Field label="Délai de grâce (heures)" name="grace_period_hours" step="1" defaultValue={sk.grace_period_hours} hint="Après l'échéance, avant la saisie de la garantie." />
+            <Field label="Rappel avant échéance (heures)" name="due_soon_notice_hours" step="1" defaultValue={sk.due_soon_notice_hours} />
+            <Field label="Frais d'ouverture (%)" name="origination_fee_pct" defaultValue={sk.origination_fee_pct} hint="Retenus sur le montant versé." />
+            <Field label="Frais de prolongation (%)" name="extension_fee_pct" defaultValue={sk.extension_fee_pct} />
+            <Field label="Durée d'une prolongation (jours)" name="extension_days" step="1" defaultValue={sk.extension_days} />
+            <Field label="Prolongations max par prêt" name="max_extensions_per_loan" step="1" defaultValue={sk.max_extensions_per_loan} />
+            <Field label="Plafond de dette par utilisateur (USD)" name="max_user_debt_usd" defaultValue={sk.max_user_debt_usd} />
+            <Toggle label="Emprunt de WAKATI autorisé" name="allow_wakati_borrow" defaultChecked={sk.allow_wakati_borrow} />
+            <Toggle label="Produit actif" name="is_active" defaultChecked={sk.is_active} />
+          </SettingsCard>
+        ) : (
+          <div className="wk-alert-bad">Aucune ligne trouvée dans stake_loan_config (id=1).</div>
+        )}
+
+        {coll ? (
+          <SettingsCard
+            returnTo={RETURN}
+            title="Garantie WAKATI"
+            hint="Part de la valeur du stake que l'on peut emprunter, seuil de saisie et pénalité."
+            updatedAt={fmtUpdated(coll.updated_at)}
+            action={updateLendingCollateralConfig}
+          >
+            <input type="hidden" name="asset_symbol" value="WAKATI" />
+            <Field label="LTV maximum à l'ouverture (%)" name="max_ltv_pct" defaultValue={coll.max_ltv_pct} />
+            <Field label="LTV de saisie (%)" name="liquidation_ltv_pct" defaultValue={coll.liquidation_ltv_pct} hint="Doit rester au-dessus du LTV maximum." />
+            <Field label="Pénalité de saisie (%)" name="liquidation_penalty_pct" defaultValue={coll.liquidation_penalty_pct} hint="Appliquée au surplus de garantie." />
+            <Toggle label="WAKATI accepté en garantie" name="is_active" defaultChecked={coll.is_active} />
+          </SettingsCard>
+        ) : (
+          <div className="wk-alert-bad">Aucune ligne WAKATI dans lending_collateral_config.</div>
+        )}
+
+        {borrowRes.rows.length > 0 && (
+          <details style={{ marginBottom: 16 }}>
+            <summary className="wk-link" style={{ cursor: "pointer", marginBottom: 12 }}>Taux et limites par actif emprunté ({borrowRes.rows.length} actifs)</summary>
+            {borrowRes.rows.map((b: any) => (
+              <SettingsCard
+                key={b.asset_symbol}
+                returnTo={RETURN}
+                title={b.asset_symbol}
+                hint="Taux annuel et limites d'emprunt. Ces taux sont aussi ceux des prêts sur garantie wallet encore actifs."
+                updatedAt={fmtUpdated(b.updated_at)}
+                action={updateLendingBorrowConfig}
+              >
+                <input type="hidden" name="asset_symbol" value={b.asset_symbol} />
+                <Field label="Taux annuel (%)" name="apr_rate_pct" defaultValue={b.apr_rate_pct} />
+                <Field label="Emprunt minimum" name="min_borrow_amount" defaultValue={b.min_borrow_amount} />
+                <Field label="Emprunt maximum par prêt" name="max_borrow_amount" defaultValue={b.max_borrow_amount ?? ""} hint="Vide = illimité." />
+                <Field label="Plafond total de la plateforme" name="max_total_borrowed" defaultValue={b.max_total_borrowed ?? ""} hint="Vide = illimité." />
+                <Toggle label="Actif" name="is_active" defaultChecked={b.is_active} />
+              </SettingsCard>
+            ))}
+          </details>
+        )}
+
+      {sc ? (
+        <SettingsCard returnTo={RETURN} title="Prêts sur score de crédit" hint="Paramètres principaux des micro-prêts accordés selon le score de l'utilisateur." updatedAt={fmtUpdated(sc.updated_at)} action={updateScoreCreditConfig}>
+          <Field label="Taux de conversion de base (%)" name="conversion_rate_base_pct" defaultValue={sc.conversion_rate_base_pct} />
+          <Field label="Taux de conversion max (%)" name="conversion_rate_max_pct" defaultValue={sc.conversion_rate_max_pct} />
+          <Field label="Frais min requis (USD, 90 j)" name="min_fees_required_usd" defaultValue={sc.min_fees_required_usd} />
+          <Field label="Âge min du compte (jours)" name="min_account_age_days" step="1" defaultValue={sc.min_account_age_days} />
+          <Field label="Plafond 1er prêt (USD)" name="first_loan_cap_usd" defaultValue={sc.first_loan_cap_usd} />
+          <Field label="Plafond absolu (USD)" name="max_absolute_cap_usd" defaultValue={sc.max_absolute_cap_usd} />
+          <Field label="Durée du prêt (jours)" name="loan_duration_days" step="1" defaultValue={sc.loan_duration_days} />
+          <Field label="Délai de grâce (heures)" name="grace_period_hours" step="1" defaultValue={sc.grace_period_hours} />
+          <Toggle label="Prêts sur score actifs" name="is_active" defaultChecked={sc.is_active} />
+          <div className="wk-hint" style={{ gridColumn: "1/-1" }}>D'autres réglages avancés (extensions, frais cross-asset...) existent dans cette table mais ne sont pas encore éditables ici.</div>
+        </SettingsCard>
+      ) : (
+        <div className="wk-alert-bad">Section Prêts sur score : aucune ligne trouvée dans score_credit_config (id=1).</div>
+      )}
+
       </Section>
     </div>
   );

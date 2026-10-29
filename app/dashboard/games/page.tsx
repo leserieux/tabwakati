@@ -1,6 +1,12 @@
 import { getSupabaseAdmin, q } from "@/lib/data";
 import { formatNumber, formatUsd, formatCompactUsd, formatPct, formatDateTime, shortId } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote, type Tone } from "@/components/ui";
+import { updateWheelConfig, updatePredictionConfig } from "@/app/dashboard/settings/actions";
+import { Field, TextField, AssetSelect, RadioGroup, Toggle, SettingsCard, SettingsMessages } from "@/components/settings-form";
+
+const RETURN = "/dashboard/games";
+type SettingsParams = { saved?: string; error?: string; msg?: string };
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,8 +87,16 @@ function rtpTone(rtp: number | null): Tone {
   return "ok";
 }
 
-export default async function GamesPage() {
+export default async function GamesPage({ searchParams }: { searchParams: SettingsParams }) {
   const db = getSupabaseAdmin();
+  const [wheelCfg, predCfg, assets] = await Promise.all([
+    q<any>(db.from("wheel_config").select("*").eq("id", 1).limit(1)),
+    q<any>(db.from("prediction_config").select("*").eq("id", 1).limit(1)),
+    q<{ symbol: string; name: string; is_active: boolean }>(db.from("supported_assets").select("symbol, name, is_active").order("symbol"))
+  ]);
+  const w = wheelCfg.rows[0];
+  const p = predCfg.rows[0];
+  const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
 
   const [wheelSummaryRes, wheelSegmentsRes, wheelConfigRes, predSummaryRes, predAssetRes, predStreakRes, wheelStreakRes] = await Promise.all([
     db.from("admin_wheel_summary").select("*").maybeSingle(),
@@ -117,6 +131,7 @@ export default async function GamesPage() {
   return (
     <div>
       <PageHeader title="Jeux" subtitle="Roue de la fortune et prédictions de prix : volumes, RTP réel et anomalies de distribution." updatedAt={formatDateTime(new Date())} />
+      <SettingsMessages searchParams={searchParams} />
       <ErrorNote text={errors ? `Certaines données n'ont pas pu être lues : ${errors}` : null} />
 
       <div className="wk-strip">
@@ -265,6 +280,39 @@ export default async function GamesPage() {
           </TableWrap>
         </Section>
       )}
+
+      <Section title="Réglages des jeux" hint="Roue de la fortune et prédictions de prix. Chaque carte s'enregistre séparément.">
+      {w ? (
+        <SettingsCard returnTo={RETURN} title="Roue de la fortune" hint="Spins gratuits, coût des spins payants et jackpot." updatedAt={fmtUpdated(w.updated_at)} action={updateWheelConfig}>
+          <Field label="Spins gratuits / jour" name="free_spins_daily" step="1" defaultValue={w.free_spins_daily} />
+          <Field label="Coût d'un spin payant" name="paid_spin_cost_amount" defaultValue={w.paid_spin_cost_amount} />
+          <AssetSelect label="Devise du coût" name="paid_spin_cost_asset" defaultValue={w.paid_spin_cost_asset} assets={assets.rows} />
+          <Field label="Contribution au jackpot (%)" name="jackpot_contribution_pct" defaultValue={w.jackpot_contribution_pct} hint="% du coût de chaque spin payant." />
+          <AssetSelect label="Devise du jackpot" name="jackpot_asset_symbol" defaultValue={w.jackpot_asset_symbol} assets={assets.rows} />
+          <Field label="Bonus de streak (spins gratuits)" name="streak_bonus_free_spins" step="1" defaultValue={w.streak_bonus_free_spins} />
+          <Field label="Intervalle du bonus de streak (jours)" name="streak_bonus_interval" step="1" defaultValue={w.streak_bonus_interval} />
+          <Toggle label="Roue active" name="is_active" defaultChecked={w.is_active} />
+        </SettingsCard>
+      ) : (
+        <div className="wk-alert-bad">Section Roue de la fortune : aucune ligne trouvée dans wheel_config (id=1).</div>
+      )}
+
+      {p ? (
+        <SettingsCard returnTo={RETURN} title="Prédictions" hint={`Mises et gains pour le jeu de prédiction sur ${p.asset_name || p.asset_symbol}.`} updatedAt={fmtUpdated(p.updated_at)} action={updatePredictionConfig}>
+          <Field label="Mise fixe (WAKATI)" name="bet_amount" defaultValue={p.bet_amount} />
+          <Field label="Mise min (mode libre)" name="bet_min" defaultValue={p.bet_min} />
+          <Field label="Mise max (mode libre)" name="bet_max" defaultValue={p.bet_max} />
+          <Field label="Multiplicateur de gain" name="win_multiplier" defaultValue={p.win_multiplier} />
+          <Field label="Durée du pari (secondes)" name="duration_seconds" step="1" defaultValue={p.duration_seconds} />
+          <Field label="Paris max / jour / utilisateur" name="max_bets_per_day" step="1" defaultValue={p.max_bets_per_day} />
+          <Field label="Délai entre 2 paris (secondes)" name="cooldown_seconds" step="1" defaultValue={p.cooldown_seconds} />
+          <Toggle label="Prédictions actives" name="is_active" defaultChecked={p.is_active} />
+        </SettingsCard>
+      ) : (
+        <div className="wk-alert-bad">Section Prédictions : aucune ligne trouvée dans prediction_config (id=1).</div>
+      )}
+
+      </Section>
     </div>
   );
 }

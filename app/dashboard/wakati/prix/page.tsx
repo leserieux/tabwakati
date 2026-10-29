@@ -1,12 +1,26 @@
 import { loadWakati } from "@/lib/wakati";
+import { getSupabaseAdmin, q } from "@/lib/data";
+import { formatDateTime } from "@/lib/format";
+import { updateWakatiReserveState } from "@/app/dashboard/settings/actions";
+import { Field, TextField, AssetSelect, RadioGroup, Toggle, SettingsCard, SettingsMessages } from "@/components/settings-form";
+
+const RETURN = "/dashboard/wakati/prix";
+type SettingsParams = { saved?: string; error?: string; msg?: string };
+
 import { formatPrice, formatUsd, formatToken, formatDay } from "@/lib/format";
 import { Section, TableWrap, Th, Td, Pill, Empty } from "@/components/ui";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function PricePage() {
-  const w = await loadWakati();
+export default async function PricePage({ searchParams }: { searchParams: SettingsParams }) {
+  const [w, wakatiState] = await Promise.all([
+    loadWakati(),
+    q<any>(getSupabaseAdmin().from("wakati_reserve_state").select("*").eq("id", 1).limit(1))
+  ]);
+  const ws = wakatiState.rows[0];
+  const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
+
   const { state, history } = w;
   const atFloor = state ? w.price <= state.floorUsd * 1.0001 : false;
   const rawNow = state && w.inApp.available > 0 ? state.reserveUsd / w.inApp.available : 0;
@@ -14,6 +28,7 @@ export default async function PricePage() {
 
   return (
     <div>
+      <SettingsMessages searchParams={searchParams} />
       {w.errors.length > 0 && <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {w.errors.join(" · ")}</div>}
 
       {!state ? (
@@ -106,6 +121,25 @@ export default async function PricePage() {
             </tbody>
           </TableWrap>
         )}
+      </Section>
+
+      <Section title="Réglages — calcul du prix" hint="Le prix est recalculé chaque jour à partir du profit net de la plateforme.">
+      {ws ? (
+        <SettingsCard returnTo={RETURN}
+          title="Prix WAKATI"
+          hint={`Calcul quotidien du prix à partir du profit net de la plateforme. Réserve actuelle : ${Number(ws.reserve_usd).toLocaleString("fr-FR", { style: "currency", currency: "USD" })} (lecture seule — alimentée par le calcul quotidien, pas éditable ici).`}
+          updatedAt={ws.last_computed_at ? fmtUpdated(ws.last_computed_at) : null}
+          action={updateWakatiReserveState}
+        >
+          <Field label="Part versée à la réserve (%)" name="profit_share_pct" defaultValue={ws.profit_share_pct} hint="Sur le profit net du jour. Retirée automatiquement (0 %) si la journée est déficitaire." />
+          <Field label="Variation max du prix / jour (%)" name="max_daily_change_pct" defaultValue={ws.max_daily_change_pct} hint="Plafonne la hausse ou la baisse quotidienne du prix calculé." />
+          <Field label="Prix plancher (USD)" name="price_floor_usd" defaultValue={ws.price_floor_usd} hint="Le prix calculé ne descend jamais en dessous." />
+          <Toggle label="Calcul automatique actif" name="is_active" defaultChecked={ws.is_active} />
+        </SettingsCard>
+      ) : (
+        <div className="wk-alert-bad">Section Prix WAKATI : aucune ligne trouvée dans wakati_reserve_state (id=1).</div>
+      )}
+
       </Section>
     </div>
   );

@@ -7,6 +7,15 @@ import { diffFields, getCurrentActor, logAdminAction, type AuditChange } from "@
 
 const PATH = "/dashboard/settings";
 
+/**
+ * Page de retour après enregistrement : les formulaires posés sur une page produit envoient `return_to`.
+ * Seuls les chemins internes /dashboard/... sont acceptés (pas de redirection ouverte).
+ */
+function backTo(fd: FormData): string {
+  const raw = String(fd.get("return_to") ?? "");
+  return /^\/dashboard\/[A-Za-z0-9/_-]*$/.test(raw) ? raw : PATH;
+}
+
 function num(fd: FormData, key: string): number {
   const n = Number(fd.get(key));
   return Number.isFinite(n) ? n : 0;
@@ -37,6 +46,7 @@ async function fetchOne(table: string, column: string, value: string | number): 
  *  - `changes` est la liste des champs modifiés, déjà calculée par l'appelant (diffFields ou construite à la main)
  */
 async function apply(opts: {
+  to?: string;
   action: string;
   summary: string;
   target: string;
@@ -54,9 +64,11 @@ async function apply(opts: {
     errorMessage: error?.message
   });
 
+  const to = opts.to ?? PATH;
   revalidatePath(PATH);
-  if (error) redirect(`${PATH}?error=${encodeURIComponent(opts.summary)}&msg=${encodeURIComponent(error.message)}`);
-  redirect(`${PATH}?saved=${encodeURIComponent(opts.summary)}`);
+  revalidatePath(to);
+  if (error) redirect(`${to}?error=${encodeURIComponent(opts.summary)}&msg=${encodeURIComponent(error.message)}`);
+  redirect(`${to}?saved=${encodeURIComponent(opts.summary)}`);
 }
 
 export async function updateStakingPool(formData: FormData) {
@@ -84,6 +96,7 @@ export async function updateStakingPool(formData: FormData) {
   const before = await fetchOne("staking_pools", "id", id);
 
   await apply({
+    to: backTo(formData),
     action: "settings.staking_pool.update",
     summary: label,
     target: `staking_pools#${id}`,
@@ -130,6 +143,7 @@ export async function addStakingPool(formData: FormData) {
     description: str(formData, "description") || null
   };
   await apply({
+    to: backTo(formData),
     action: "settings.staking_pool.create",
     summary: `${name || assetSymbol} (ajouté)`,
     target: `staking_pools#${assetSymbol}`,
@@ -142,6 +156,7 @@ export async function deleteStakingPool(formData: FormData) {
   const id = str(formData, "id");
   const label = str(formData, "label") || id;
   await apply({
+    to: backTo(formData),
     action: "settings.staking_pool.delete",
     summary: `${label} supprimé`,
     target: `staking_pools#${id}`,
@@ -158,6 +173,7 @@ export async function updateWakatiReserveState(formData: FormData) {
   };
   const before = await fetchOne("wakati_reserve_state", "id", 1);
   await apply({
+    to: backTo(formData),
     action: "settings.wakati_reserve_state.update",
     summary: "Prix WAKATI",
     target: "wakati_reserve_state#1",
@@ -183,6 +199,7 @@ export async function updateWheelConfig(formData: FormData) {
   };
   const before = await fetchOne("wheel_config", "id", 1);
   await apply({
+    to: backTo(formData),
     action: "settings.wheel.update",
     summary: "Roue de la fortune",
     target: "wheel_config#1",
@@ -208,6 +225,7 @@ export async function updatePredictionConfig(formData: FormData) {
   };
   const before = await fetchOne("prediction_config", "id", 1);
   await apply({
+    to: backTo(formData),
     action: "settings.prediction.update",
     summary: "Prédictions",
     target: "prediction_config#1",
@@ -234,6 +252,7 @@ export async function updateScoreCreditConfig(formData: FormData) {
   };
   const before = await fetchOne("score_credit_config", "id", 1);
   await apply({
+    to: backTo(formData),
     action: "settings.score_credit.update",
     summary: "Prêts sur score de crédit",
     target: "score_credit_config#1",
@@ -266,6 +285,7 @@ export async function updatePaymentCountry(formData: FormData) {
   };
   const before = await fetchOne("payment_countries", "iso_code", iso);
   await apply({
+    to: backTo(formData),
     action: "settings.payment_country.update",
     summary: label,
     target: `payment_countries#${iso}`,
@@ -303,6 +323,7 @@ export async function addPaymentCountry(formData: FormData) {
     sort_order: num(formData, "sort_order") || 100
   };
   await apply({
+    to: backTo(formData),
     action: "settings.payment_country.create",
     summary: `${name || iso} (ajouté)`,
     target: `payment_countries#${iso}`,
@@ -315,6 +336,7 @@ export async function deletePaymentCountry(formData: FormData) {
   const iso = str(formData, "iso_code");
   const label = str(formData, "label") || iso;
   await apply({
+    to: backTo(formData),
     action: "settings.payment_country.delete",
     summary: `${label} supprimé`,
     target: `payment_countries#${iso}`,
@@ -331,6 +353,7 @@ export async function updateCampayConfig(formData: FormData) {
   };
   const before = await fetchOne("campay_config", "id", 1);
   await apply({
+    to: backTo(formData),
     action: "settings.campay.update",
     summary: "Campay (secours)",
     target: "campay_config#1",
@@ -367,6 +390,7 @@ export async function updateAsset(formData: FormData) {
   };
   const before = await fetchOne("supported_assets", "symbol", symbol);
   await apply({
+    to: backTo(formData),
     action: "settings.asset.update",
     summary: label,
     target: `supported_assets#${symbol}`,
@@ -409,10 +433,90 @@ export async function addAsset(formData: FormData) {
     min_sweep: num(formData, "min_sweep")
   };
   await apply({
+    to: backTo(formData),
     action: "settings.asset.create",
     summary: `${name || symbol} (ajouté)`,
     target: `supported_assets#${symbol}`,
     changes: diffFields(null, insertRow),
     run: () => getSupabaseAdmin().from("supported_assets").insert(insertRow)
+  });
+}
+
+// ── Prêts (réglages affichés sur la page Produits > Prêts) ──
+
+export async function updateStakeLoanConfig(formData: FormData) {
+  const patch = {
+    is_active: bool(formData, "is_active"),
+    min_duration_days: Math.round(num(formData, "min_duration_days")),
+    max_duration_days: Math.round(num(formData, "max_duration_days")),
+    default_duration_days: Math.round(num(formData, "default_duration_days")),
+    grace_period_hours: Math.round(num(formData, "grace_period_hours")),
+    due_soon_notice_hours: Math.round(num(formData, "due_soon_notice_hours")),
+    origination_fee_pct: num(formData, "origination_fee_pct"),
+    extension_fee_pct: num(formData, "extension_fee_pct"),
+    extension_days: Math.round(num(formData, "extension_days")),
+    max_extensions_per_loan: Math.round(num(formData, "max_extensions_per_loan")),
+    max_user_debt_usd: num(formData, "max_user_debt_usd"),
+    allow_wakati_borrow: bool(formData, "allow_wakati_borrow")
+  };
+  const before = await fetchOne("stake_loan_config", "id", 1);
+  await apply({
+    to: backTo(formData),
+    action: "settings.stake_loan_config.update",
+    summary: "Prêts sur staking",
+    target: "stake_loan_config#1",
+    changes: diffFields(before, patch),
+    run: () =>
+      getSupabaseAdmin()
+        .from("stake_loan_config")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("id", 1)
+  });
+}
+
+export async function updateLendingCollateralConfig(formData: FormData) {
+  const asset = str(formData, "asset_symbol");
+  const patch = {
+    max_ltv_pct: num(formData, "max_ltv_pct"),
+    liquidation_ltv_pct: num(formData, "liquidation_ltv_pct"),
+    liquidation_penalty_pct: num(formData, "liquidation_penalty_pct"),
+    is_active: bool(formData, "is_active")
+  };
+  const before = await fetchOne("lending_collateral_config", "asset_symbol", asset);
+  await apply({
+    to: backTo(formData),
+    action: "settings.lending_collateral.update",
+    summary: `Garantie ${asset}`,
+    target: `lending_collateral_config#${asset}`,
+    changes: diffFields(before, patch),
+    run: () =>
+      getSupabaseAdmin()
+        .from("lending_collateral_config")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("asset_symbol", asset)
+  });
+}
+
+export async function updateLendingBorrowConfig(formData: FormData) {
+  const asset = str(formData, "asset_symbol");
+  const patch = {
+    apr_rate_pct: num(formData, "apr_rate_pct"),
+    min_borrow_amount: num(formData, "min_borrow_amount"),
+    max_borrow_amount: numOrNull(formData, "max_borrow_amount"),
+    max_total_borrowed: numOrNull(formData, "max_total_borrowed"),
+    is_active: bool(formData, "is_active")
+  };
+  const before = await fetchOne("lending_borrow_config", "asset_symbol", asset);
+  await apply({
+    to: backTo(formData),
+    action: "settings.lending_borrow.update",
+    summary: `Emprunt ${asset}`,
+    target: `lending_borrow_config#${asset}`,
+    changes: diffFields(before, patch),
+    run: () =>
+      getSupabaseAdmin()
+        .from("lending_borrow_config")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("asset_symbol", asset)
   });
 }
