@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { loadWakati } from "@/lib/wakati";
 import { getSupabaseAdmin, q } from "@/lib/data";
 import { formatDateTime } from "@/lib/format";
@@ -14,11 +15,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function PricePage({ searchParams }: { searchParams: SettingsParams }) {
-  const [w, wakatiState] = await Promise.all([
+  const [w, wakatiState, shortages] = await Promise.all([
     loadWakati(),
-    q<any>(getSupabaseAdmin().from("wakati_reserve_state").select("*").eq("id", 1).limit(1))
+    q<any>(getSupabaseAdmin().from("wakati_reserve_state").select("*").eq("id", 1).limit(1)),
+    q<any>(getSupabaseAdmin().from("wakati_liquidity_events").select("id, user_id, requested_wakati, requested_usd, reserve_usd, shortfall_usd, created_at").order("created_at", { ascending: false }).limit(10))
   ]);
   const ws = wakatiState.rows[0];
+  const shortageRows = shortages.rows;
   const fmtUpdated = (iso?: string) => (iso ? formatDateTime(new Date(iso)) : null);
 
   const { state, history } = w;
@@ -30,6 +33,13 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
     <div>
       <SettingsMessages searchParams={searchParams} />
       {w.errors.length > 0 && <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {w.errors.join(" · ")}</div>}
+      {shortages.error && <div className="wk-alert-bad">Ventes refusées : lecture impossible ({shortages.error}). La migration 20261028_wakati_sale_drains_price_reserve.sql est-elle appliquée ?</div>}
+      {ws?.liquidity_shortage && (
+        <div className="wk-callout wk-callout-warn" style={{ marginBottom: 16 }}>
+          <strong>Manque de liquidité.</strong> La réserve du prix ne couvre plus les ventes de WAKATI
+          {ws.liquidity_shortage_since ? <> depuis le {formatDateTime(new Date(ws.liquidity_shortage_since))}</> : null}. Les ventes trop grosses sont refusées et signalées à l'utilisateur. Le signal disparaît dès que la réserve remonte (calcul quotidien).
+        </div>
+      )}
 
       {!state ? (
         <Empty text="Le système de prix WAKATI n'est pas configuré." />
@@ -49,7 +59,7 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
             <div className="wk-strip-item">
               <div className="wk-strip-label">Réserve</div>
               <div className="wk-strip-value">{formatUsd(state.reserveUsd)}</div>
-              <div className="wk-strip-sub">alimentée par les profits</div>
+              <div className="wk-strip-sub">alimentée par les profits, vidée par les ventes</div>
             </div>
             <div className="wk-strip-item">
               <div className="wk-strip-label">Dernier calcul</div>
@@ -116,6 +126,37 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
                   <Td right label="Offre utilisée">{formatToken(h.circulating)}</Td>
                   <Td right label="Prix">{formatPrice(h.finalPrice)}</Td>
                   <Td label="Plafonné">{h.capped ? <Pill tone="warn">Oui</Pill> : <Pill tone="info">Non</Pill>}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        )}
+      </Section>
+
+      <Section title="Ventes refusées pour manque de liquidité" hint="Une vente de WAKATI vide la réserve de sa valeur en USD ; si la réserve ne suffit pas, la vente est refusée. Les 10 derniers refus. Les achats n'alimentent pas la réserve.">
+        {shortageRows.length === 0 ? (
+          <Empty text="Aucune vente refusée." />
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Date</Th>
+                <Th>Utilisateur</Th>
+                <Th right>WAKATI demandés</Th>
+                <Th right>Valeur</Th>
+                <Th right>Réserve à ce moment</Th>
+                <Th right>Manque</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {shortageRows.map((e: any) => (
+                <tr key={e.id}>
+                  <Td label="Date">{formatDateTime(new Date(e.created_at))}</Td>
+                  <Td label="Utilisateur"><Link href={`/dashboard/users/${e.user_id}`}>{String(e.user_id).slice(0, 8)}…</Link></Td>
+                  <Td right label="WAKATI demandés">{formatToken(Number(e.requested_wakati))}</Td>
+                  <Td right label="Valeur">{formatUsd(Number(e.requested_usd))}</Td>
+                  <Td right label="Réserve à ce moment">{formatUsd(Number(e.reserve_usd))}</Td>
+                  <Td right label="Manque"><span className="wk-neg">{formatUsd(Number(e.shortfall_usd))}</span></Td>
                 </tr>
               ))}
             </tbody>

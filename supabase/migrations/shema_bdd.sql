@@ -645,7 +645,21 @@ CREATE TABLE public.wakati_reserve_state (
   is_active boolean NOT NULL DEFAULT true,
   last_computed_at timestamp with time zone,
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  liquidity_shortage boolean NOT NULL DEFAULT false,
+  liquidity_shortage_since timestamp with time zone,
+  last_shortage_at timestamp with time zone,
   CONSTRAINT wakati_reserve_state_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.wakati_liquidity_events (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  user_id uuid NOT NULL,
+  requested_wakati numeric NOT NULL,
+  requested_usd numeric NOT NULL,
+  reserve_usd numeric NOT NULL,
+  shortfall_usd numeric NOT NULL,
+  wakati_price_usd numeric NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT wakati_liquidity_events_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.wakati_price_history (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
