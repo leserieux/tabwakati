@@ -5,6 +5,7 @@ import { loadFiatCustody } from "@/lib/pawapay";
 import { loadWakatiInApp } from "@/lib/wakati";
 import { formatNumber, formatToken, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, Icon } from "@/components/ui";
+import Link from "next/link";
 import { adjustLiquidity } from "./actions";
 
 export const runtime = "nodejs";
@@ -33,6 +34,20 @@ type LedgerRow = {
   balance_before: number;
   balance_after: number;
   reason: string | null;
+  created_at: string;
+};
+
+type ShortageState = { asset_symbol: string; liquidity_shortage_since: string | null; last_shortage_at: string | null };
+type ShortageEvent = {
+  id: number;
+  asset_symbol: string;
+  user_id: string;
+  from_asset: string;
+  from_amount: number;
+  requested_amount: number;
+  reserve_amount: number;
+  shortfall_amount: number;
+  shortfall_usd: number | null;
   created_at: string;
 };
 
@@ -196,8 +211,16 @@ export default async function LiquidityPage({
   searchParams: { saved?: string; error?: string; msg?: string };
 }) {
   const db = getSupabaseAdmin();
-  const [{ lines, error: loadError }, ledgerRes] = await Promise.all([
+  const [{ lines, error: loadError }, shortageStateRes, shortageEventsRes, ledgerRes] = await Promise.all([
     loadLines(),
+    q<ShortageState>(db.from("asset_liquidity_state").select("asset_symbol, liquidity_shortage_since, last_shortage_at").eq("liquidity_shortage", true)),
+    q<ShortageEvent>(
+      db
+        .from("asset_liquidity_events")
+        .select("id, asset_symbol, user_id, from_asset, from_amount, requested_amount, reserve_amount, shortfall_amount, shortfall_usd, created_at")
+        .order("created_at", { ascending: false })
+        .limit(15)
+    ),
     q<LedgerRow>(
       db
         .from("treasury_ledger")
@@ -230,6 +253,12 @@ export default async function LiquidityPage({
   for (const l of short) todo.push({ tone: "bad", text: `Il manque ${formatNumber(-(gap(l) ?? 0))} ${l.asset}${usd(l, -(gap(l) ?? 0)) ? ` (~${usd(l, -(gap(l) ?? 0))})` : ""} vs ${l.compareLabel}.` });
   for (const l of dry) todo.push({ tone: "warn", text: `${l.asset} : réserve à sec malgré une activité de swap passée.` });
   for (const l of minor) todo.push({ tone: "warn", text: `${l.asset} : écart mineur (< ${formatUsd(MINOR_USD)}) vs ${l.compareLabel}.` });
+  for (const st of shortageStateRes.rows) {
+    todo.push({
+      tone: "bad",
+      text: `${st.asset_symbol} : manque de liquidité signalé${st.liquidity_shortage_since ? ` depuis le ${formatDateTime(new Date(st.liquidity_shortage_since))}` : ""} — des swaps vers cet actif sont refusés tant que la réserve n'est pas réapprovisionnée.`
+    });
+  }
   if (cov.unpriced.length > 0) todo.push({ tone: "warn", text: `Sans prix valide (exclus des totaux en dollars) : ${cov.unpriced.join(", ")}.` });
   for (const l of errored) todo.push({ tone: "bad", text: `${l.asset} : lecture impossible (${l.error || "erreur inconnue"}).` });
 
@@ -348,6 +377,44 @@ export default async function LiquidityPage({
                   </tr>
                 );
               })}
+            </tbody>
+          </TableWrap>
+        )}
+      </Section>
+
+      <Section title="Swaps refusés pour manque de liquidité" hint="Un swap est refusé quand la réserve de l'actif à verser ne le couvre pas (valable pour tous les actifs, WAKATI compris). Les 15 derniers refus.">
+        {shortageEventsRes.error ? (
+          <ErrorNote text={`Refus illisibles : ${shortageEventsRes.error}. La migration 20261029_asset_liquidity_tracking.sql est-elle appliquée ?`} />
+        ) : shortageEventsRes.rows.length === 0 ? (
+          <Empty text="Aucun swap refusé." />
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Date</Th>
+                <Th>Actif à verser</Th>
+                <Th>Utilisateur</Th>
+                <Th right hideSm>Il donnait</Th>
+                <Th right>Demandé</Th>
+                <Th right>Réserve</Th>
+                <Th right>Manque</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {shortageEventsRes.rows.map((e) => (
+                <tr key={e.id}>
+                  <Td label="Date">{formatDateTime(new Date(e.created_at))}</Td>
+                  <Td label="Actif à verser">{e.asset_symbol}</Td>
+                  <Td label="Utilisateur"><Link href={`/dashboard/users/${e.user_id}`}>{String(e.user_id).slice(0, 8)}…</Link></Td>
+                  <Td right label="Il donnait" hideSm>{formatNumber(Number(e.from_amount))} {e.from_asset}</Td>
+                  <Td right label="Demandé">{formatNumber(Number(e.requested_amount))}</Td>
+                  <Td right label="Réserve">{formatNumber(Number(e.reserve_amount))}</Td>
+                  <Td right label="Manque">
+                    <span className="wk-neg">{formatNumber(Number(e.shortfall_amount))}</span>
+                    {e.shortfall_usd !== null && <div className="wk-usd">{formatUsd(Number(e.shortfall_usd))}</div>}
+                  </Td>
+                </tr>
+              ))}
             </tbody>
           </TableWrap>
         )}

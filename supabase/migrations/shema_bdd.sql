@@ -636,6 +636,33 @@ CREATE TABLE public.score_loans (
   CONSTRAINT score_loans_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT score_loans_asset_symbol_fkey FOREIGN KEY (asset_symbol) REFERENCES public.supported_assets(symbol)
 );
+CREATE TABLE public.asset_liquidity_state (
+  asset_symbol text NOT NULL,
+  liquidity_shortage boolean NOT NULL DEFAULT false,
+  liquidity_shortage_since timestamp with time zone,
+  last_shortage_at timestamp with time zone,
+  last_required_amount numeric,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT asset_liquidity_state_pkey PRIMARY KEY (asset_symbol),
+  CONSTRAINT asset_liquidity_state_asset_symbol_fkey FOREIGN KEY (asset_symbol) REFERENCES public.supported_assets(symbol)
+);
+CREATE TABLE public.asset_liquidity_events (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  asset_symbol text NOT NULL,
+  user_id uuid NOT NULL,
+  from_asset text NOT NULL,
+  from_amount numeric NOT NULL,
+  requested_amount numeric NOT NULL,
+  reserve_amount numeric NOT NULL,
+  shortfall_amount numeric NOT NULL,
+  price_usd numeric,
+  requested_usd numeric,
+  reserve_usd numeric,
+  shortfall_usd numeric,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT asset_liquidity_events_pkey PRIMARY KEY (id),
+  CONSTRAINT asset_liquidity_events_asset_symbol_fkey FOREIGN KEY (asset_symbol) REFERENCES public.supported_assets(symbol)
+);
 CREATE TABLE public.wakati_reserve_state (
   id integer NOT NULL DEFAULT 1 CHECK (id = 1),
   reserve_usd numeric NOT NULL DEFAULT 0,
@@ -645,21 +672,7 @@ CREATE TABLE public.wakati_reserve_state (
   is_active boolean NOT NULL DEFAULT true,
   last_computed_at timestamp with time zone,
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  liquidity_shortage boolean NOT NULL DEFAULT false,
-  liquidity_shortage_since timestamp with time zone,
-  last_shortage_at timestamp with time zone,
   CONSTRAINT wakati_reserve_state_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.wakati_liquidity_events (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  user_id uuid NOT NULL,
-  requested_wakati numeric NOT NULL,
-  requested_usd numeric NOT NULL,
-  reserve_usd numeric NOT NULL,
-  shortfall_usd numeric NOT NULL,
-  wakati_price_usd numeric NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT wakati_liquidity_events_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.wakati_price_history (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
