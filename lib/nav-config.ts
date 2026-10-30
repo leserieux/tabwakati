@@ -14,6 +14,7 @@ export const NAV: NavEntry[] = [
   { key: "today", label: "Aujourd'hui", icon: "grid", href: "/dashboard" },
   { key: "money", label: "Argent", icon: "shield", href: "/dashboard/treasury", tabs: [
     { href: "/dashboard/treasury", label: "Solvabilité" },
+    { href: "/dashboard/custody", label: "Réserve de retrait" },
     { href: "/dashboard/pnl", label: "Résultat" },
     { href: "/dashboard/pnl/depots", label: "Dépôts" },
     { href: "/dashboard/liquidity", label: "Liquidité (swap)" },

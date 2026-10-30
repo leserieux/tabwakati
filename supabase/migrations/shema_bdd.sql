@@ -663,6 +663,32 @@ CREATE TABLE public.asset_liquidity_events (
   CONSTRAINT asset_liquidity_events_pkey PRIMARY KEY (id),
   CONSTRAINT asset_liquidity_events_asset_symbol_fkey FOREIGN KEY (asset_symbol) REFERENCES public.supported_assets(symbol)
 );
+CREATE TABLE public.custody_policy (
+  asset_symbol text NOT NULL,
+  min_hot numeric NOT NULL DEFAULT 0,
+  days_cover numeric NOT NULL DEFAULT 3,
+  low_pct numeric NOT NULL DEFAULT 50,
+  high_pct numeric NOT NULL DEFAULT 150,
+  invest_pct numeric NOT NULL DEFAULT 0,
+  safety_pct numeric NOT NULL DEFAULT 20,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT custody_policy_pkey PRIMARY KEY (asset_symbol),
+  CONSTRAINT custody_policy_asset_symbol_fkey FOREIGN KEY (asset_symbol) REFERENCES public.supported_assets(symbol)
+);
+CREATE TABLE public.custody_snapshots (
+  snapshot_date date NOT NULL,
+  asset_symbol text NOT NULL,
+  kind text NOT NULL,
+  owe numeric NOT NULL,
+  have numeric,
+  hot numeric,
+  vault numeric,
+  on_users numeric,
+  swap_stock numeric,
+  price_usd numeric,
+  taken_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT custody_snapshots_pkey PRIMARY KEY (snapshot_date, asset_symbol)
+);
 CREATE TABLE public.wakati_reserve_state (
   id integer NOT NULL DEFAULT 1 CHECK (id = 1),
   reserve_usd numeric NOT NULL DEFAULT 0,

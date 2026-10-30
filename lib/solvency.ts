@@ -26,6 +26,10 @@ export interface Line {
   priceUsd: number | null;
   error?: string;
   details?: { label: string; value: number }[];
+  // Où se trouve l'argent détenu (utile à la page « Réserve de retrait »)
+  hot?: number | null; // portefeuille de retrait (ou chez le prestataire pour l'argent mobile)
+  vault?: number; // coffre
+  onUsers?: number; // pas encore ramassé sur les adresses des utilisateurs
 }
 
 // ─────────────────────────── Chargement des données ───────────────────────────
@@ -68,6 +72,7 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
     const owe = liab.get(asset.symbol)?.total ?? 0;
     const c = custody.get(asset.symbol);
     const treasury = c?.treasury ?? null;
+    const vault = c?.vault ?? 0;
     const users = c?.users ?? 0;
     const usersFailed = c?.usersFailed ?? 0;
     const have = c?.total ?? null;
@@ -82,9 +87,13 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
       have,
       owe,
       note: noteParts.join(" · ") || undefined,
-      status: computeStatus(have, owe, treasury),
+      // Le coffre est « à l'abri » mais fait partie de la trésorerie : seul ce qui traîne sur les adresses des utilisateurs reste à balayer.
+      status: computeStatus(have, owe, treasury !== null ? treasury + vault : null),
       priceUsd: prices.get(asset.symbol) ?? null,
-      error: c?.error
+      error: c?.error,
+      hot: treasury,
+      vault,
+      onUsers: users
     };
   });
 
@@ -125,7 +134,10 @@ export async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<strin
       status: computeStatus(have, owe, null),
       priceUsd: prices.get(asset) ?? null,
       error: pawapayError,
-      details
+      details,
+      hot: have,
+      vault: 0,
+      onUsers: 0
     });
   }
   lines.sort((a, b) => a.asset.localeCompare(b.asset));

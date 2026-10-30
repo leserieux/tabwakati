@@ -1,6 +1,8 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
+import { buildPlans, ensureTodaySnapshot } from "@/lib/custody-policy";
+import { summarize as summarizeCustody } from "@/lib/custody-plan";
 import { loadPnl } from "@/lib/pnl";
 import { loadControls } from "@/lib/controls";
 import { NAV } from "@/lib/nav-config";
@@ -56,7 +58,19 @@ export default async function TodayPage() {
   const sweepFailCount = sweepFails.count || 0;
 
   // ── À traiter : chaque ligne renvoie vers la page où l'on agit ──
+  // Réserve de retrait : jamais bloquant pour l'accueil (si ça échoue, on n'affiche simplement pas l'alerte).
+  let custodySummary: ReturnType<typeof summarizeCustody> | null = null;
+  try {
+    const { plans } = await buildPlans(sol);
+    custodySummary = summarizeCustody(plans);
+    await ensureTodaySnapshot(plans); // relevé quotidien, même si personne n'ouvre la page « Réserve de retrait »
+  } catch (e) {
+    console.error("[accueil] réserve de retrait non calculée:", e);
+  }
+
   const todo: Todo[] = [];
+  if (custodySummary && custodySummary.danger.length) todo.push({ tone: "bad", text: `Un gros retrait pourrait échouer sur : ${custodySummary.danger.map((p) => p.asset).join(", ")}. Ajoute de l'argent dans le portefeuille de retrait.`, href: "/dashboard/custody" });
+  if (custodySummary && custodySummary.refill.length) todo.push({ tone: "warn", text: `Portefeuille de retrait à remplir bientôt : ${custodySummary.refill.map((p) => p.asset).join(", ")}.`, href: "/dashboard/custody" });
   if (cov.missingUsd > 0.01) todo.push({ tone: "bad", text: `Il manque environ ${formatUsd(cov.missingUsd)} pour couvrir ce que tu dois aux utilisateurs.`, href: "/dashboard/treasury" });
   if (sol.error) todo.push({ tone: "bad", text: `Couverture non calculable : ${sol.error}.`, href: "/dashboard/treasury" });
   if (unreadable.length) todo.push({ tone: "warn", text: `Solde réel illisible pour : ${unreadable.join(", ")} (exclus de la couverture).`, href: "/dashboard/treasury" });

@@ -343,3 +343,73 @@ a { color: inherit; }
 .wk-alert-warn { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 12px 16px; font-size: 14px; margin-bottom: 16px; }
 .wk-ok { color: var(--ok); }
 .wk-bad { color: var(--bad); }
+
+/* ───────── Réserve de retrait (lisible par tous) ───────── */
+.wk-explain { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.wk-explain-item { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.wk-explain-item h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.wk-explain-item p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.5; }
+.wk-explain-emoji { font-size: 22px; display: block; margin-bottom: 6px; }
+
+.wk-verdict { border-radius: 14px; padding: 22px 26px; margin-bottom: 20px; border: 1px solid var(--line); background: var(--surface); }
+.wk-verdict-title { font-size: 20px; font-weight: 600; margin: 0 0 6px; color: var(--ink); line-height: 1.3; }
+.wk-verdict p { margin: 4px 0 0; font-size: 15px; line-height: 1.5; }
+.wk-verdict-ok { background: var(--ok-bg); border-color: #bfe0cd; }
+.wk-verdict-ok .wk-verdict-title { color: #10492f; }
+.wk-verdict-warn { background: var(--warn-bg); border-color: #efd3ad; }
+.wk-verdict-warn .wk-verdict-title { color: #5a3406; }
+.wk-verdict-bad { background: var(--bad-bg); border-color: #f0c3bf; }
+.wk-verdict-bad .wk-verdict-title { color: #6d1710; }
+.wk-verdict-unknown { background: var(--info-bg); }
+
+.wk-cust-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.wk-cust-card { background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--line-strong); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.wk-cust-card-ok { border-left-color: var(--ok); }
+.wk-cust-card-warn { border-left-color: var(--warn); }
+.wk-cust-card-bad { border-left-color: var(--bad); }
+.wk-cust-card-info { border-left-color: var(--faint); }
+.wk-cust-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.wk-cust-name { font-size: 17px; font-weight: 600; color: var(--ink); margin: 0; }
+.wk-cust-say { font-size: 15px; line-height: 1.55; margin: 0; color: var(--text); }
+.wk-cust-say b { font-weight: 600; color: var(--ink); }
+.wk-cust-usd { color: var(--faint); font-size: 13px; }
+.wk-cust-rows { margin: 0; display: grid; gap: 6px; font-size: 14px; }
+.wk-cust-rows div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-bottom: 5px; }
+.wk-cust-rows dt { color: var(--muted); }
+.wk-cust-rows dd { margin: 0; font-weight: 500; color: var(--ink); text-align: right; }
+.wk-cust-action { border-radius: 10px; padding: 12px 14px; font-size: 14.5px; line-height: 1.5; }
+.wk-cust-action strong { display: block; font-weight: 600; margin-bottom: 2px; }
+.wk-cust-action-ok { background: var(--ok-bg); color: #10492f; }
+.wk-cust-action-warn { background: var(--warn-bg); color: #5a3406; }
+.wk-cust-action-bad { background: var(--bad-bg); color: #6d1710; }
+.wk-cust-action-info { background: var(--info-bg); color: var(--ink-soft); }
+.wk-cust-why { font-size: 13.5px; color: var(--muted); }
+.wk-cust-why summary { cursor: pointer; font-weight: 500; color: var(--accent); }
+.wk-cust-why ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.wk-cust-work { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
+.wk-cust-work b { color: var(--ink); font-weight: 600; }
+
+/* Jauge : où en est le portefeuille de retrait ? */
+.wk-gauge { padding-top: 22px; }
+.wk-gauge-track { position: relative; height: 14px; border-radius: 999px; overflow: visible; background: var(--info-bg); }
+.wk-gauge-zone { position: absolute; top: 0; height: 100%; }
+.wk-gauge-low { background: #f4d7b0; border-radius: 999px 0 0 999px; }
+.wk-gauge-good { background: #b9e0c9; }
+.wk-gauge-high { background: #d5dbe4; border-radius: 0 999px 999px 0; }
+.wk-gauge-target { position: absolute; top: -4px; width: 2px; height: 22px; background: var(--ink); opacity: 0.55; transform: translateX(-1px); }
+.wk-gauge-marker { position: absolute; top: -5px; width: 24px; height: 24px; margin-left: -12px; border-radius: 50%; background: var(--ink); border: 3px solid #fff; box-shadow: 0 0 0 1px var(--ink); }
+.wk-gauge-marker-ok { background: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
+.wk-gauge-marker-warn { background: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+.wk-gauge-marker-bad { background: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.wk-gauge-marker-info { background: var(--info); box-shadow: 0 0 0 1px var(--info); }
+.wk-gauge-now { position: absolute; top: -26px; transform: translateX(-50%); font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.wk-gauge-labels { position: relative; height: 28px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.wk-gauge-labels span { position: absolute; transform: translateX(-50%); text-align: center; line-height: 1.25; }
+
+.wk-cust-form { display: grid; gap: 12px; padding: 14px 0 4px; }
+.wk-cust-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 18px; }
+.wk-cust-form label { display: block; font-size: 13.5px; font-weight: 500; margin-bottom: 4px; color: var(--ink); }
+.wk-cust-form small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 3px; line-height: 1.35; }
+.wk-set-row { border-top: 1px solid var(--line); }
+.wk-set-row summary { cursor: pointer; padding: 12px 2px; font-weight: 500; color: var(--ink); display: flex; justify-content: space-between; gap: 12px; }
+.wk-set-row summary span { color: var(--muted); font-weight: 400; font-size: 13.5px; }

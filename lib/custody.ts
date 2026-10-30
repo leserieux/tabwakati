@@ -3,6 +3,11 @@ import { getNativeBalance, getTokenBalance, getBtcBalance, getNativeBalances, ge
 
 const TREASURY_EVM_ADDRESS = process.env.TREASURY_EVM_ADDRESS || "";
 const TREASURY_BTC_ADDRESS = process.env.TREASURY_BTC_ADDRESS || "";
+// Coffre (stockage à l'abri, « froid ») : optionnel. Tant qu'il n'est pas configuré, tout se comporte comme avant.
+// Les fonds du coffre comptent dans ce que la plateforme détient (sinon les mettre à l'abri ferait croire à un manque).
+const VAULT_EVM_ADDRESS = process.env.VAULT_EVM_ADDRESS || "";
+const VAULT_BTC_ADDRESS = process.env.VAULT_BTC_ADDRESS || "";
+export const VAULT_CONFIGURED = Boolean(VAULT_EVM_ADDRESS || VAULT_BTC_ADDRESS);
 
 export interface CustodyAssetInput {
   symbol: string;
@@ -12,10 +17,11 @@ export interface CustodyAssetInput {
 }
 
 export interface CustodyLine {
-  treasury: number | null; // solde sur l'adresse trésor elle-même
+  treasury: number | null; // solde sur l'adresse trésor elle-même (le portefeuille de retrait)
+  vault: number; // solde dans le coffre (0 si aucun coffre n'est configuré)
   users: number; // somme encore sur les adresses individuelles des utilisateurs (pas encore balayées)
   usersFailed: number; // adresses utilisateur dont la lecture a échoué
-  total: number | null; // treasury + users — la vraie custody actuelle, null si la lecture trésor a échoué
+  total: number | null; // treasury + vault + users — la vraie custody actuelle, null si une lecture a échoué
   error?: string;
 }
 
@@ -29,7 +35,9 @@ export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<M
   const db = getSupabaseAdmin();
   const { data: userAddrs } = await db.from("user_addresses").select("asset_symbol, address").eq("is_active", true);
 
-  const treasuryLower = new Set([TREASURY_EVM_ADDRESS, TREASURY_BTC_ADDRESS].filter(Boolean).map((a) => a.toLowerCase()));
+  const treasuryLower = new Set(
+    [TREASURY_EVM_ADDRESS, TREASURY_BTC_ADDRESS, VAULT_EVM_ADDRESS, VAULT_BTC_ADDRESS].filter(Boolean).map((a) => a.toLowerCase())
+  );
   const addrMap = new Map<string, string[]>();
   for (const a of userAddrs || []) {
     if (!a.address || treasuryLower.has(String(a.address).toLowerCase())) continue;
@@ -49,6 +57,8 @@ export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<M
         const decimals = asset.decimals || 18;
 
         let treasury: number | null = null;
+        let vault = 0;
+        let vaultFailed = false;
         let users = 0;
         let usersFailed = 0;
         let error: string | undefined;
@@ -71,6 +81,20 @@ export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<M
           })(),
           (async () => {
             try {
+              if (asset.symbol === "BTC") {
+                if (VAULT_BTC_ADDRESS) vault = await getBtcBalance(VAULT_BTC_ADDRESS);
+              } else if (VAULT_EVM_ADDRESS) {
+                vault = asset.contract_address
+                  ? await getTokenBalance(network, asset.contract_address, VAULT_EVM_ADDRESS, decimals)
+                  : await getNativeBalance(network, VAULT_EVM_ADDRESS);
+              }
+            } catch (e: any) {
+              vaultFailed = true;
+              error = error || `Lecture du coffre impossible : ${e?.message || "erreur inconnue"}`;
+            }
+          })(),
+          (async () => {
+            try {
               const r =
                 asset.symbol === "BTC"
                   ? await getBtcBalances(addresses)
@@ -87,9 +111,10 @@ export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<M
 
         result.set(asset.symbol, {
           treasury,
+          vault,
           users,
           usersFailed,
-          total: treasury !== null ? treasury + users : null,
+          total: treasury !== null && !vaultFailed ? treasury + vault + users : null,
           error
         });
       })
