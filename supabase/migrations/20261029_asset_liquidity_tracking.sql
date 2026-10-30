@@ -7,6 +7,7 @@
 --     asset_liquidity_state.liquidity_shortage = true ;
 --   - le même drapeau est levé quand un swap laisse la réserve de l'actif versé à 0 ;
 --   - il retombe tout seul quand la réserve remonte au moins au niveau du dernier montant refusé (trigger sur treasury_wallets) ;
+--   - le même suivi s'applique à l'achat de WAKATI (voir 20261030_buy_wakati_liquidity_tracking.sql) ;
 --   - l'actif donné par l'utilisateur est crédité à sa réserve (c'est ce que l'app reçoit réellement : comptabilité inchangée).
 --
 -- Cette migration REMPLACE 20261028_wakati_sale_drains_price_reserve.sql (supprimée du dépôt) : si celle-ci avait déjà été appliquée,
@@ -107,7 +108,42 @@ create trigger treasury_clear_liquidity_shortage
   after update of balance on public.treasury_wallets
   for each row execute function public.trg_treasury_clear_liquidity_shortage();
 
--- 3) Contrôle avant le swap : NULL si la réserve de l'actif versé suffit, sinon le message à afficher.
+-- 3) Enregistrement commun d'un manque de liquidité (swap, achat de WAKATI…) : écrit l'événement, marque l'actif
+--    et renvoie le message à afficher à l'utilisateur. Appelé par les fonctions qui versent un actif ; jamais par un client.
+create or replace function public._asset_liquidity_record_shortage(
+  p_user_id uuid, p_asset text, p_from_asset text, p_from_amount numeric, p_requested numeric, p_reserve numeric
+) returns text language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_price numeric;
+  v_short numeric;
+begin
+  SELECT price_usd INTO v_price FROM public.asset_prices WHERE asset_symbol = p_asset;
+  v_short := p_requested - p_reserve;
+
+  INSERT INTO public.asset_liquidity_events
+    (asset_symbol, user_id, from_asset, from_amount, requested_amount, reserve_amount, shortfall_amount,
+     price_usd, requested_usd, reserve_usd, shortfall_usd)
+  VALUES
+    (p_asset, p_user_id, p_from_asset, p_from_amount, p_requested, p_reserve, v_short,
+     v_price, p_requested * v_price, p_reserve * v_price, v_short * v_price);
+
+  INSERT INTO public.asset_liquidity_state (asset_symbol, liquidity_shortage, liquidity_shortage_since, last_shortage_at, last_required_amount)
+  VALUES (p_asset, true, now(), now(), p_requested)
+  ON CONFLICT (asset_symbol) DO UPDATE
+  SET liquidity_shortage       = true,
+      liquidity_shortage_since = COALESCE(public.asset_liquidity_state.liquidity_shortage_since, now()),
+      last_shortage_at         = now(),
+      last_required_amount     = EXCLUDED.last_required_amount,
+      updated_at               = now();
+
+  IF p_reserve <= 0 THEN
+    RETURN format('Manque de liquidité en %s : la réserve est vide, cette opération est impossible pour le moment. Réessaie plus tard.', p_asset);
+  END IF;
+  RETURN format('Manque de liquidité en %s : la réserve ne couvre pas cette opération (disponible : %s %s). Réessaie avec un montant plus petit ou plus tard.',
+                p_asset, TRUNC(p_reserve, 8), p_asset);
+end $$;
+
+-- Contrôle avant le swap : NULL si la réserve de l'actif versé suffit, sinon le message à afficher.
 create or replace function public._asset_liquidity_check(p_user_id uuid, p_from_asset text, p_to_asset text, p_from_amount numeric)
 returns text language plpgsql security definer set search_path to 'public' as $$
 declare
@@ -115,8 +151,6 @@ declare
   v_est      record;
   v_reserve  numeric;
   v_user_bal numeric;
-  v_price    numeric;
-  v_short    numeric;
 begin
   IF p_from_asset IS NULL OR p_to_asset IS NULL OR p_from_asset = p_to_asset OR p_from_amount IS NULL OR p_from_amount <= 0 THEN
     RETURN NULL;  -- le cœur du swap répond lui-même (mêmes actifs, montant invalide…)
@@ -142,34 +176,11 @@ begin
   WHERE user_id = p_user_id AND asset_symbol = p_from_asset;
   IF COALESCE(v_user_bal, 0) < p_from_amount THEN RETURN NULL; END IF;
 
-  SELECT price_usd INTO v_price FROM public.asset_prices WHERE asset_symbol = p_to_asset;
-  v_short := v_est.amount_out - v_reserve;
-
-  INSERT INTO public.asset_liquidity_events
-    (asset_symbol, user_id, from_asset, from_amount, requested_amount, reserve_amount, shortfall_amount,
-     price_usd, requested_usd, reserve_usd, shortfall_usd)
-  VALUES
-    (p_to_asset, p_user_id, p_from_asset, p_from_amount, v_est.amount_out, v_reserve, v_short,
-     v_price, v_est.amount_out * v_price, v_reserve * v_price, v_short * v_price);
-
-  INSERT INTO public.asset_liquidity_state (asset_symbol, liquidity_shortage, liquidity_shortage_since, last_shortage_at, last_required_amount)
-  VALUES (p_to_asset, true, now(), now(), v_est.amount_out)
-  ON CONFLICT (asset_symbol) DO UPDATE
-  SET liquidity_shortage       = true,
-      liquidity_shortage_since = COALESCE(public.asset_liquidity_state.liquidity_shortage_since, now()),
-      last_shortage_at         = now(),
-      last_required_amount     = EXCLUDED.last_required_amount,
-      updated_at               = now();
-
-  IF v_reserve <= 0 THEN
-    RETURN format('Manque de liquidité en %s : la réserve est vide, ce swap est impossible pour le moment. Réessaie plus tard.', p_to_asset);
-  END IF;
-  RETURN format('Manque de liquidité en %s : la réserve ne couvre pas ce swap (disponible : %s %s). Réessaie avec un montant plus petit ou plus tard.',
-                p_to_asset, TRUNC(v_reserve, 8), p_to_asset);
+  RETURN public._asset_liquidity_record_shortage(p_user_id, p_to_asset, p_from_asset, p_from_amount, v_est.amount_out, v_reserve);
 end $$;
 
--- Après un swap réussi : si la réserve de l'actif versé est tombée à 0, on le signale aussi.
-create or replace function public._asset_liquidity_after_swap(p_to_asset text)
+-- Après un versement réussi (swap, achat de WAKATI…) : si la réserve de l'actif versé est tombée à 0, on le signale aussi.
+create or replace function public._asset_liquidity_after_payout(p_to_asset text)
 returns void language plpgsql security definer set search_path to 'public' as $$
 declare v_reserve numeric;
 begin
@@ -186,8 +197,9 @@ begin
   END IF;
 end $$;
 
+revoke execute on function public._asset_liquidity_record_shortage(uuid, text, text, numeric, numeric, numeric) from public, anon, authenticated;
 revoke execute on function public._asset_liquidity_check(uuid, text, text, numeric) from public, anon, authenticated;
-revoke execute on function public._asset_liquidity_after_swap(text) from public, anon, authenticated;
+revoke execute on function public._asset_liquidity_after_payout(text) from public, anon, authenticated;
 
 -- 4) Surcharges existantes -> « cœur » (inchangées, non appelables par les clients). Sans effet si déjà renommées.
 do $$
@@ -226,7 +238,7 @@ begin
   SELECT * INTO r FROM public._execute_swap_realtime_core(p_user_id, p_from_asset, p_to_asset, p_from_amount, p_slippage_tolerance, p_min_amount_out);
 
   IF r.success THEN
-    PERFORM public._asset_liquidity_after_swap(p_to_asset);
+    PERFORM public._asset_liquidity_after_payout(p_to_asset);
   END IF;
 
   RETURN QUERY SELECT r.success, r.message, r.transaction_id, r.from_amount, r.to_amount, r.exchange_rate, r.fee_amount, r.net_to_amount, r.realtime_price_used;
@@ -253,7 +265,7 @@ begin
   SELECT * INTO r FROM public._execute_swap_realtime_core(p_user_id, p_from_asset, p_to_asset, p_from_amount, p_slippage_tolerance);
 
   IF r.success THEN
-    PERFORM public._asset_liquidity_after_swap(p_to_asset);
+    PERFORM public._asset_liquidity_after_payout(p_to_asset);
   END IF;
 
   RETURN QUERY SELECT r.success, r.message, r.transaction_id, r.from_amount, r.to_amount, r.exchange_rate, r.fee_amount, r.net_to_amount, r.realtime_price_used;
