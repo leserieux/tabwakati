@@ -1,4 +1,4 @@
-import { loadDeposits } from "@/lib/deposits";
+import { loadDeposits, ORIGINS } from "@/lib/deposits";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 import { Signals, PeriodTabs, parsePeriod } from "@/components/signals";
@@ -31,6 +31,22 @@ export default async function DepositsPage({ searchParams }: { searchParams: { p
 
       <Signals items={r.signals} />
 
+      <Section title="Qui est responsable des échecs ?" hint="Chaque échec est rattaché à une origine d'après le code PawaPay (failure_code) ou, à défaut, le texte du motif.">
+        <TableWrap>
+          <thead><tr><Th>Origine</Th><Th right>Échecs</Th><Th right>Part</Th><Th hideSm>Signification</Th></tr></thead>
+          <tbody>
+            {r.origins.map((o) => (
+              <tr key={o.origin}>
+                <Td label="Origine"><Pill tone={ORIGINS[o.origin].tone}>{ORIGINS[o.origin].label}</Pill></Td>
+                <Td right label="Échecs">{formatNumber(o.count, 0)}</Td>
+                <Td right label="Part">{formatPct(o.share, 0)}</Td>
+                <Td hideSm label="Signification"><span style={{ color: "var(--muted)", fontSize: 13.5 }}>{ORIGINS[o.origin].who}</span></Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      </Section>
+
       <Section title="Pourquoi les dépôts échouent" hint="Les causes « évitable » dépendent de vous (configuration, validation) ; les autres du client ou du réseau.">
         <TableWrap>
           <thead><tr><Th>Cause</Th><Th right>Échecs</Th><Th right>Part</Th><Th>Évitable ?</Th><Th hideSm>Que faire</Th></tr></thead>
@@ -42,6 +58,25 @@ export default async function DepositsPage({ searchParams }: { searchParams: { p
                 <Td right label="Part">{formatPct(c.share, 0)}</Td>
                 <Td label="Évitable ?"><Pill tone={c.def.fixable ? "bad" : "info"}>{c.def.fixable ? "Oui" : "Non"}</Pill></Td>
                 <Td hideSm label="Que faire"><span style={{ color: "var(--muted)", fontSize: 13.5 }}>{c.def.hint}</span></Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      </Section>
+
+      <Section title="Derniers échecs (détail)" hint="Code PawaPay brut et motif enregistré : un code vide ou « Indéterminé » = l'information n'a pas été conservée à l'échec.">
+        <TableWrap>
+          <thead><tr><Th>Date</Th><Th>Utilisateur</Th><Th right>Montant</Th><Th hideSm>Opérateur</Th><Th>Code</Th><Th>Origine</Th><Th hideSm>Motif brut</Th></tr></thead>
+          <tbody>
+            {r.recentFailures.length === 0 ? <tr><Td colSpan={7}>Aucun échec sur la période.</Td></tr> : r.recentFailures.map((f) => (
+              <tr key={f.id}>
+                <Td label="Date">{formatDateTime(new Date(f.at))}</Td>
+                <Td label="Utilisateur">{f.username}</Td>
+                <Td right label="Montant">{formatNumber(f.amount, 0)}</Td>
+                <Td hideSm label="Opérateur">{f.operator || f.provider} · {f.country}</Td>
+                <Td label="Code">{f.code || "—"}</Td>
+                <Td label="Origine"><Pill tone={ORIGINS[f.cause.origin].tone}>{ORIGINS[f.cause.origin].label}</Pill></Td>
+                <Td hideSm label="Motif brut"><span style={{ color: "var(--muted)", fontSize: 13 }}>{f.message || "—"}</span></Td>
               </tr>
             ))}
           </tbody>
