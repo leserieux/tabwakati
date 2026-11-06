@@ -55,42 +55,86 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
   const db = getSupabaseAdmin();
   const { data: assets, error: assetsError } = await db
     .from("supported_assets")
-    .select("symbol, network, contract_address, decimals")
+    .select("symbol, network, contract_address, decimals, ledger_symbol")
     .neq("network", "Fiat")
     .eq("is_active", true);
   if (assetsError) throw new Error(`Impossible de lire les actifs (${assetsError.message})`);
 
-  const toRead = (assets || []).filter((a) => {
-    const l = liab.get(a.symbol) || { total: 0, count: 0 };
-    if (INTERNAL_ONLY_ASSETS.has(a.symbol)) return false; // WAKATI : section dédiée plus bas
-    return !(l.total === 0 && l.count === 0);
-  });
+  // Un actif unifié (ex. USDC) = une seule ligne, même s'il existe sur plusieurs réseaux :
+  // les utilisateurs voient un seul solde « USDC », donc le dû est global et les réserves de tous les réseaux le couvrent.
+  type Asset = NonNullable<typeof assets>[number];
+  const groups = new Map<string, Asset[]>();
+  for (const a of assets || []) {
+    const key = String(a.ledger_symbol || a.symbol);
+    const list = groups.get(key) || [];
+    list.push(a);
+    groups.set(key, list);
+  }
 
-  const custody = await loadOnchainCustody(toRead);
+  // Dû d'un groupe : solde unifié + d'éventuels soldes historiques stockés sous les symboles par réseau
+  const liabilityOf = (ledger: string, members: Asset[]): Liab => {
+    const keys = new Set<string>([ledger, ...members.map((m) => m.symbol)]);
+    let total = 0;
+    let count = 0;
+    for (const k of keys) {
+      const l = liab.get(k);
+      if (l) {
+        total += l.total;
+        count += l.count;
+      }
+    }
+    return { total, count };
+  };
 
-  const lines: Line[] = toRead.map((asset) => {
-    const owe = liab.get(asset.symbol)?.total ?? 0;
-    const c = custody.get(asset.symbol);
-    const treasury = c?.treasury ?? null;
-    const vault = c?.vault ?? 0;
-    const users = c?.users ?? 0;
-    const usersFailed = c?.usersFailed ?? 0;
-    const have = c?.total ?? null;
+  const active = [...groups.entries()]
+    .filter(([ledger, members]) => !INTERNAL_ONLY_ASSETS.has(ledger) && !members.some((m) => INTERNAL_ONLY_ASSETS.has(m.symbol)))
+    .map(([ledger, members]) => ({ ledger, members, l: liabilityOf(ledger, members) }))
+    .filter((g) => !(g.l.total === 0 && g.l.count === 0)); // WAKATI : section dédiée plus bas
+
+  const custody = await loadOnchainCustody(active.flatMap((g) => g.members));
+
+  const lines: Line[] = active.map(({ ledger, members, l }) => {
+    const owe = l.total;
+    const cs = members.map((m) => ({ m, c: custody.get(m.symbol) }));
+
+    const sum = (pick: (c: NonNullable<(typeof cs)[number]["c"]>) => number | null): number | null => {
+      let t = 0;
+      for (const { c } of cs) {
+        const v = c ? pick(c) : null;
+        if (v === null) return null;
+        t += v;
+      }
+      return t;
+    };
+
+    const have = sum((c) => c.total);
+    const treasury = sum((c) => c.treasury);
+    const vault = cs.reduce((n, { c }) => n + (c?.vault ?? 0), 0);
+    const users = cs.reduce((n, { c }) => n + (c?.users ?? 0), 0);
+    const usersFailed = cs.reduce((n, { c }) => n + (c?.usersFailed ?? 0), 0);
+    const errors = cs.map(({ m, c }) => (c?.error ? (members.length > 1 ? `${m.network} : ${c.error}` : c.error) : null)).filter(Boolean) as string[];
 
     const noteParts: string[] = [];
     if (users > EPS) noteParts.push(`dont ${formatNumber(users)} encore sur les adresses des utilisateurs`);
     if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
 
+    const multi = members.length > 1;
+    const priceUsd = prices.get(ledger) ?? members.map((m) => prices.get(m.symbol)).find((p) => p !== undefined) ?? null;
+
     return {
-      asset: asset.symbol,
-      label: `${asset.symbol} (${asset.network})`,
+      asset: multi ? ledger : members[0].symbol,
+      label: multi ? `${ledger} (${members.map((m) => m.network).join(" + ")})` : `${members[0].symbol} (${members[0].network})`,
       have,
       owe,
       note: noteParts.join(" · ") || undefined,
       // Le coffre est « à l'abri » mais fait partie de la trésorerie : seul ce qui traîne sur les adresses des utilisateurs reste à balayer.
       status: computeStatus(have, owe, treasury !== null ? treasury + vault : null),
-      priceUsd: prices.get(asset.symbol) ?? null,
-      error: c?.error,
+      priceUsd,
+      error: errors.join(" · ") || undefined,
+      // Détail par réseau (utile pour savoir où se trouvent les fonds avant un retrait)
+      details: multi
+        ? cs.map(({ m, c }) => ({ label: c && c.total !== null ? m.network : `${m.network} (illisible)`, value: c?.total ?? 0 }))
+        : undefined,
       hot: treasury,
       vault,
       onUsers: users
