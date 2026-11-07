@@ -9,26 +9,35 @@ import { Section, TableWrap, Th, Td, Pill } from "@/components/ui";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Ce qui sort de la trésorerie vers les utilisateurs (nouveaux WAKATI en circulation). */
-const EMISSIONS: { type: string; label: string }[] = [
-  { type: "staking_reward", label: "Récompenses de staking" },
-  { type: "referral_bonus", label: "Bonus de parrainage" },
-  { type: "game_win", label: "Gains aux jeux" }
+/**
+ * Flux réels de la trésorerie WAKATI, lus dans le journal (treasury_ledger).
+ * « Sortie » = WAKATI qui quittent la trésorerie vers les utilisateurs ; une valeur négative = ce qui revient.
+ * Les ajustements comptables, backfills, burns et retraits admin ne sont pas de l'émission : exclus du net.
+ */
+const FLOW_GROUPS: { key: string; label: string; types: string[] }[] = [
+  { key: "rewards", label: "Récompenses, bonus et gains aux jeux", types: ["payout_debit"] },
+  { key: "sales", label: "WAKATI vendus aux utilisateurs (achats)", types: ["wakati_sale"] },
+  { key: "swaps", label: "Swaps WAKATI ↔ autres actifs (net)", types: ["swap_out", "swap_in"] },
+  { key: "loans", label: "Prêts accordés moins remboursés", types: ["loan_disbursement", "loan_repayment", "liquidation"] },
+  { key: "fees", label: "Frais et mises encaissés", types: ["fee_credit"] },
+  { key: "reclaim", label: "Reprises admin sur les utilisateurs", types: ["admin_reclaim"] }
 ];
-/** Ce qui revient dans la trésorerie : les mises perdues. */
-const RETURN_TYPE = "game_bet";
+const NON_EMISSION_TYPES = ["adjustment", "backfill", "burn", "admin_withdrawal"];
 
-type FlowRow = { type: string; count: number; total: number };
+type FlowRow = { type: string; count: number; change: number };
 
-async function loadFlows(days: number): Promise<{ rows: FlowRow[]; days: number; error?: string }> {
-  const { data, error } = await getSupabaseAdmin().rpc("get_wakati_flows", { p_days: days });
-  const d: any = data || { tx: [], days };
+async function loadTreasuryFlows(days: number): Promise<{ rows: FlowRow[]; days: number; error?: string }> {
+  const { data, error } = await getSupabaseAdmin().rpc("get_wakati_treasury_flows", { p_days: days });
+  const d: any = data || { rows: [], days };
   return {
     days: Number(d.days || days),
-    rows: ((d.tx || []) as any[]).map((t) => ({ type: String(t.type), count: Number(t.count), total: Number(t.total) })),
+    rows: ((d.rows || []) as any[]).map((t) => ({ type: String(t.type), count: Number(t.count), change: Number(t.change) })),
     error: error?.message
   };
 }
+
+/** Sortie nette vers les utilisateurs pour des types d'écriture (positif = la trésorerie diminue). */
+const outflow = (rows: FlowRow[], types: string[]) => -rows.filter((r) => types.includes(r.type)).reduce((n, r) => n + r.change, 0);
 
 function Field({ label, name, defaultValue, hint, step = "any" }: { label: string; name: string; defaultValue: number | string; hint?: string; step?: string }) {
   return (
@@ -51,29 +60,27 @@ function Toggle({ label, name, defaultChecked }: { label: string; name: string; 
 export default async function OffrePage({ searchParams }: { searchParams: { saved?: string; error?: string; msg?: string } }) {
   const [w, burns, em] = await Promise.all([loadWakati(), loadBurns(), loadEmission()]);
   const cfg = em.settings;
-  const f90 = await loadFlows(cfg.runwayWindowDays);
+  const [f90, f30] = await Promise.all([loadTreasuryFlows(cfg.runwayWindowDays), loadTreasuryFlows(30)]);
   const { inApp, wallet } = w;
 
   // Plafond propre à l'application (Burns > Réglages). Vide = automatique : WAKATI chez les utilisateurs + trésorerie interne.
-  // Ce n'est pas l'offre de la blockchain.
+  // Attention : en mode automatique le plafond suit l'offre réelle, donc il ne peut pas détecter un excédent. Fixe-le à 10 000 000 dans Burns > Réglages.
   const treasury = wallet?.balance ?? 0;
   const configuredCap = burns.rule?.supplyCapWakati ?? null;
-  const cap = configuredCap ?? inApp.total + treasury;
-  const capBelowUsage = configuredCap !== null && configuredCap < inApp.total + treasury;
+  const existing = inApp.total + treasury;
+  const cap = configuredCap ?? existing;
+  const TOL = 0.001; // tolérance d'arrondi (WAKATI)
+  const capBelowUsage = configuredCap !== null && configuredCap + TOL < existing;
+  const excess = configuredCap !== null ? existing - configuredCap : 0;
+  const missing = configuredCap !== null ? configuredCap - existing : 0;
 
-  const sum = (rows: FlowRow[], types: string[]) => rows.filter((r) => types.includes(r.type)).reduce((n, r) => n + r.total, 0);
-  const f30 = w.flows;
-
-  const em30 = sum(f30.tx, EMISSIONS.map((e) => e.type));
-  const ret30 = sum(f30.tx, [RETURN_TYPE]);
-  const net30 = em30 - ret30;
-
+  const net30 = FLOW_GROUPS.reduce((n, g) => n + outflow(f30.rows, g.types), 0);
   const scale = 30 / Math.max(f90.days, 1);
-  const em90m = sum(f90.rows, EMISSIONS.map((e) => e.type)) * scale;
-  const ret90m = sum(f90.rows, [RETURN_TYPE]) * scale;
-  const net90m = em90m - ret90m;
+  const net90m = FLOW_GROUPS.reduce((n, g) => n + outflow(f90.rows, g.types), 0) * scale;
+  const outOfScope30 = NON_EMISSION_TYPES.reduce((n, t) => n + f30.rows.filter((r) => r.type === t).reduce((m, r) => m + r.change, 0), 0);
 
-  // Tenue de la trésorerie : sur la moyenne mensuelle des 90 derniers jours (plus stable que 30 jours).
+  // Tenue de la trésorerie : sur la moyenne mensuelle des derniers jours (plus stable que 30 jours).
+  // Si la sortie nette est nulle ou négative, la trésorerie ne baisse pas : il n'y a pas de durée à estimer.
   const runwayMonths = net90m > 0 ? treasury / net90m : null;
   const st = em.status;
   const budgetMonthly = treasury * (cfg.budgetPctPerMonth / 100);
@@ -91,17 +98,23 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
   const dilution = available + STEP > 0 ? (STEP / (available + STEP)) * 100 : 0;
   const rawPrice = available > 0 ? reserve / available : null;
 
-  const yearsText = runwayMonths === null ? "Illimitée" : runwayMonths >= 24 ? `${formatNumber(runwayMonths / 12, 1)} ans` : `${formatNumber(runwayMonths, 1)} mois`;
+  const yearsText = runwayMonths === null ? "Stable (la trésorerie ne baisse pas)" : runwayMonths >= 24 ? `${formatNumber(runwayMonths / 12, 1)} ans` : `${formatNumber(runwayMonths, 1)} mois`;
 
   return (
     <div>
       {capBelowUsage && (
-        <div className="wk-alert-bad">Le plafond défini ({formatToken(cap)} WAKATI) est inférieur à ce qui existe déjà dans l'app ({formatToken(inApp.total + treasury)} WAKATI chez les utilisateurs et en trésorerie). Corrige-le dans Burns &gt; Réglages.</div>
+        <div className="wk-alert-bad">Intégrité de l'offre : il y a {formatToken(excess)} WAKATI de trop par rapport au plafond de {formatToken(cap)} (utilisateurs + trésorerie = {formatToken(existing)}). Des jetons ont été créés par erreur dans la base : cherche l'écriture en cause dans le journal de trésorerie et corrige-la.</div>
+      )}
+      {configuredCap !== null && !capBelowUsage && missing > TOL && (
+        <div className="wk-alert-ok">Offre interne : {formatToken(missing)} WAKATI sous le plafond de {formatToken(cap)} (jetons retirés, brûlés ou sortis de l'app).</div>
+      )}
+      {configuredCap === null && (
+        <div className="wk-alert-bad">Aucun plafond n'est défini : l'offre affichée est simplement la somme de ce qui existe, donc un excédent passerait inaperçu. Fixe le plafond (10 000 000) dans Burns &gt; Réglages.</div>
       )}
       {searchParams.error && <div className="wk-alert-bad">{searchParams.msg || "Opération refusée."}</div>}
       {searchParams.saved && <div className="wk-alert-ok">{searchParams.msg || "Enregistré."}</div>}
-      {(w.errors.length > 0 || burns.error || f90.error || em.error) && (
-        <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {[...w.errors, burns.error, f90.error, em.error].filter(Boolean).join(" · ")}</div>
+      {(w.errors.length > 0 || burns.error || f90.error || f30.error || em.error) && (
+        <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {[...w.errors, burns.error, f90.error, f30.error, em.error].filter(Boolean).join(" · ")}</div>
       )}
 
       <div className="wk-strip">
@@ -111,14 +124,14 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
           <div className="wk-strip-sub">{configuredCap !== null ? "défini dans l'app (Burns > Réglages)" : "automatique (en app + trésorerie)"}</div>
         </div>
         <div className="wk-strip-item">
-          <div className="wk-strip-label">Émission nette sur 30 jours</div>
+          <div className="wk-strip-label">{net30 >= 0 ? "Sortie nette sur 30 jours" : "Retour net sur 30 jours"}</div>
           <div className="wk-strip-value">{formatCompactNumber(net30)}</div>
           <div className="wk-strip-sub">{treasury > 0 ? `${formatPct((net30 / treasury) * 100, 2)} de la trésorerie` : "—"}</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Tenue de la trésorerie</div>
           <div className="wk-strip-value">{yearsText}</div>
-          <div className="wk-strip-sub">{runwayMonths === null ? `elle ne baisse pas (${f90.days} j)` : `au rythme moyen des ${f90.days} jours`}</div>
+          <div className="wk-strip-sub">{runwayMonths === null ? `sur les ${f90.days} derniers jours` : `au rythme moyen des ${f90.days} jours`}</div>
         </div>
         <div className="wk-strip-item">
           <div className="wk-strip-label">Brûlé</div>
@@ -129,22 +142,22 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
 
       <Section title="Principe" hint="L'offre ne grossit pas : elle est fixe. La seule chose qui bouge, c'est la part de la trésorerie qui passe chez les utilisateurs.">
         <div className="wk-callout">
-          Aucun nouveau WAKATI n'est créé par ta plateforme. Les {formatToken(treasury)} WAKATI de la trésorerie sont le <strong>budget d'émission</strong> : ils sortent vers les utilisateurs (staking, parrainage, gains aux jeux) et reviennent en partie (mises). Le burn retire des jetons de ce budget quand le prix atteint le seuil. Vérifie sur PolygonScan que le contrat ne possède pas de fonction de création (« mint ») : si elle existe, l'offre n'est pas réellement plafonnée.
+          Aucun nouveau WAKATI n'est créé par ta plateforme. Les {formatToken(treasury)} WAKATI de la trésorerie sont le <strong>budget d'émission</strong> : ils sortent vers les utilisateurs (récompenses, achats, swaps, prêts) et reviennent en partie (frais, mises perdues, remboursements). Offre fixe : si utilisateurs + trésorerie dépasse le plafond, c'est une erreur de comptabilité, signalée en haut de page. Le burn retire des jetons de ce budget quand le prix atteint le seuil. Vérifie sur PolygonScan que le contrat ne possède pas de fonction de création (« mint ») : si elle existe, l'offre n'est pas réellement plafonnée.
         </div>
       </Section>
 
-      <Section title="Ce qui sort de la trésorerie" hint="Nouveaux WAKATI mis en circulation chez les utilisateurs, par source, sur 30 jours et en moyenne mensuelle sur 90 jours.">
+      <Section title="Flux de la trésorerie" hint="Lu dans le journal de trésorerie : tout ce qui sort vers les utilisateurs (positif) et tout ce qui revient (négatif), sur 30 jours et en moyenne mensuelle.">
         <TableWrap>
           <thead>
-            <tr><Th>Source</Th><Th right>30 jours</Th><Th right>{`Moyenne / mois (${f90.days} j)`}</Th><Th right hideSm>Valeur (30 j)</Th></tr>
+            <tr><Th>Flux</Th><Th right>30 jours</Th><Th right>{`Moyenne / mois (${f90.days} j)`}</Th><Th right hideSm>Valeur (30 j)</Th></tr>
           </thead>
           <tbody>
-            {EMISSIONS.map((e) => {
-              const a = sum(f30.tx, [e.type]);
-              const b = sum(f90.rows, [e.type]) * scale;
+            {FLOW_GROUPS.map((g) => {
+              const a = outflow(f30.rows, g.types);
+              const b = outflow(f90.rows, g.types) * scale;
               return (
-                <tr key={e.type}>
-                  <Td>{e.label}</Td>
+                <tr key={g.key}>
+                  <Td>{g.label}</Td>
                   <Td right label="30 jours">{formatToken(a)}</Td>
                   <Td right label="Moyenne / mois">{formatToken(b)}</Td>
                   <Td right hideSm label="Valeur">{formatUsd(a * w.price)}</Td>
@@ -152,25 +165,16 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
               );
             })}
             <tr>
-              <Td><strong>Total émis</strong></Td>
-              <Td right label="30 jours"><strong>{formatToken(em30)}</strong></Td>
-              <Td right label="Moyenne / mois"><strong>{formatToken(em90m)}</strong></Td>
-              <Td right hideSm label="Valeur"><strong>{formatUsd(em30 * w.price)}</strong></Td>
-            </tr>
-            <tr>
-              <Td>Mises qui reviennent en trésorerie</Td>
-              <Td right label="30 jours">− {formatToken(ret30)}</Td>
-              <Td right label="Moyenne / mois">− {formatToken(ret90m)}</Td>
-              <Td right hideSm label="Valeur">− {formatUsd(ret30 * w.price)}</Td>
-            </tr>
-            <tr>
-              <Td><strong>Émission nette</strong></Td>
+              <Td><strong>{net30 >= 0 ? "Sortie nette vers les utilisateurs" : "Retour net vers la trésorerie"}</strong></Td>
               <Td right label="30 jours"><strong>{formatToken(net30)}</strong></Td>
               <Td right label="Moyenne / mois"><strong>{formatToken(net90m)}</strong></Td>
               <Td right hideSm label="Valeur"><strong>{formatUsd(net30 * w.price)}</strong></Td>
             </tr>
           </tbody>
         </TableWrap>
+        <div className="wk-asset-sub" style={{ marginTop: 8 }}>
+          Un net négatif signifie que la trésorerie a reçu plus qu'elle n'a versé (frais, mises perdues, swaps vers d'autres actifs, remboursements) : ce n'est pas de la création de jetons. Les ajustements comptables et les burns ne sont pas comptés{Math.abs(outOfScope30) > TOL ? ` (${formatToken(outOfScope30)} WAKATI de ce type sur 30 jours)` : ""}.
+        </div>
       </Section>
 
       <Section title="Plafond d'émission" hint={`Budget de ${formatNumber(cfg.budgetPctPerMonth, 2)} % de la trésorerie par mois, calculé sur ${cfg.windowDays} jours glissants. Appliqué automatiquement au staking et au parrainage ; les gains aux jeux sont comptés mais jamais bloqués.`}>
@@ -277,7 +281,7 @@ export default async function OffrePage({ searchParams }: { searchParams: { save
             <div className="wk-kv-row"><span>Part encore en trésorerie</span><span>{cap > 0 ? formatPct((treasury / cap) * 100, 1) : "—"}</span></div>
             <div className="wk-kv-row"><span>En circulation chez les utilisateurs</span><span>{formatToken(inApp.total)} ({cap > 0 ? formatPct((inApp.total / cap) * 100, 2) : "—"})</span></div>
             <div className="wk-kv-row"><span>Brûlé à ce jour</span><span>{formatToken(burnedBooked)} WAKATI</span></div>
-            <div className="wk-kv-row"><span>Émission nette moyenne</span><span>{formatToken(net90m)} WAKATI / mois</span></div>
+            <div className="wk-kv-row"><span>{net90m >= 0 ? "Sortie nette moyenne" : "Retour net moyen"}</span><span>{formatToken(net90m)} WAKATI / mois</span></div>
             <div className="wk-kv-row"><span>Tenue de la trésorerie à ce rythme</span><span>{yearsText}</span></div>
             <div className="wk-kv-row"><span>Création de nouveaux jetons</span><span>Aucune par la plateforme</span></div>
           </div>
