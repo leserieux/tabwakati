@@ -1,4 +1,5 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
+import { futuresTodos } from "@/lib/futures";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { buildPlans, ensureTodaySnapshot } from "@/lib/custody-policy";
@@ -92,6 +93,7 @@ export default async function TodayPage() {
   if (pnl30 && pnl30.current.net < -0.005) todo.push({ tone: "warn", text: `Résultat net des 30 derniers jours : ${formatUsd(pnl30.current.net)}.`, href: "/dashboard/pnl" });
   const pausedRows = ((paused.data as any[]) || []) as any[];
   if (pausedRows.length) todo.push({ tone: "info", text: `Dépôts suspendus : ${pausedRows.map((p) => p.symbol).join(", ")}.`, href: "/dashboard/settings" });
+  todo.push(...(await futuresTodos()));
   todo.sort((a, b) => ORDER[a.tone] - ORDER[b.tone]);
 
   // ── Statut unique : seuls « bad » et « warn » comptent ; « info » reste informatif ──

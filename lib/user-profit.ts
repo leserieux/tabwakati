@@ -1,4 +1,5 @@
 import { getSupabaseAdmin, fetchAll } from "@/lib/data";
+import { FEE_TYPE_EXCLUSION_FILTER } from "@/lib/metrics/rules";
 import { loadValuer } from "@/lib/pnl";
 import type { SignalItem } from "@/components/signals";
 
@@ -29,7 +30,7 @@ export async function loadUserProfit(periodDays: number, now = Date.now()): Prom
   const [usersRes, txRes, feesRes, valuer] = await Promise.all([
     fetchAll<any>((a, b) => db.from("users").select("id, username, referred_by").order("id").range(a, b)),
     fetchAll<any>((a, b) => db.from("transactions").select("user_id, type, asset_symbol, amount, created_at").eq("status", "completed").in("type", TX).gte("created_at", sinceIso).order("id").range(a, b)),
-    fetchAll<any>((a, b) => db.from("platform_fees").select("source_user_id, asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", "(game_house_edge,game_net_loss)").not("source_user_id", "is", null).gte("collected_at", sinceIso).order("id").range(a, b)),
+    fetchAll<any>((a, b) => db.from("platform_fees").select("source_user_id, asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", FEE_TYPE_EXCLUSION_FILTER).not("source_user_id", "is", null).gte("collected_at", sinceIso).order("id").range(a, b)),
     loadValuer()
   ]);
 

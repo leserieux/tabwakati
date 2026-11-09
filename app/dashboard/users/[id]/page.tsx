@@ -3,6 +3,7 @@ import { loadUserPerformance } from "@/lib/user-performance";
 import { loadUserWindowSummaries } from "@/lib/user-analytics";
 import { buildUserDecisionSummary } from "@/lib/user-decision";
 import { formatCompactNumber, formatDateTime, formatToken, formatUsd, shortId } from "@/lib/format";
+import { loadUserFutures } from "@/lib/futures";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -80,6 +81,7 @@ type RiskFlagRow = {
 };
 
 export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string } }) {
+  const futuresPromise = loadUserFutures(params.id);
   const db = getSupabaseAdmin();
   const selectedAsset = (searchParams?.asset || "").trim();
 
@@ -150,6 +152,7 @@ export default async function UserDetailPage({ params, searchParams }: { params:
 
   const queryErrors = [balances.error, transactions.error, kyc.error, limits.error, riskScoreRes.error, riskFlags.error, performance.error, windows.error].filter(Boolean);
 
+  const futures = await futuresPromise;
   return (
     <div>
       <PageHeader title={user.username || "Utilisateur"} subtitle={`Compte ${shortId(user.id)} · profil, risque, actifs et performance`} updatedAt={formatDateTime(new Date())} />
@@ -326,6 +329,26 @@ export default async function UserDetailPage({ params, searchParams }: { params:
           </TableWrap>
         )}
       </Section>
+
+      {futures.rows.length > 0 && (
+        <Section title="Futures" hint={`Dernières positions de trading à levier (${futures.openCount} ouverte(s)). Détail et contrôles : Produits › Futures.`}>
+          <TableWrap>
+            <thead><tr><Th>Sens</Th><Th right>Marge</Th><Th right hideSm>Entrée → Sortie</Th><Th>Statut</Th><Th right>Résultat net</Th><Th hideSm>Ouverte</Th></tr></thead>
+            <tbody>
+              {futures.rows.map((r: any) => (
+                <tr key={r.id}>
+                  <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
+                  <Td right label="Marge">{formatToken(r.margin)}</Td>
+                  <Td right hideSm label="Entrée → Sortie">{formatToken(r.entry_price)} → {r.exit_price === null ? "—" : formatToken(r.exit_price)}</Td>
+                  <Td label="Statut">{r.status === "open" ? <Pill tone="info">Ouverte</Pill> : r.close_reason === "liquidation" ? <Pill tone="bad">Liquidée</Pill> : r.close_reason === "tp" ? <Pill tone="ok">Take Profit</Pill> : r.close_reason === "sl" ? <Pill tone="warn">Stop Loss</Pill> : <Pill tone="info">Fermée</Pill>}</Td>
+                  <Td right label="Résultat net">{r.realized_pnl === null ? "—" : `${r.realized_pnl > 0 ? "+" : ""}${formatToken(r.realized_pnl)}`}</Td>
+                  <Td hideSm label="Ouverte">{formatDateTime(new Date(r.opened_at))}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </Section>
+      )}
 
       <Section title="Risque & alertes" hint="Signal de risque depuis le score et les flags analytiques.">
         {riskFlags.rows.length === 0 ? (

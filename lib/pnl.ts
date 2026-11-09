@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, fetchAll, loadPrices, q } from "@/lib/data";
 import { isValidPrice } from "@/lib/valuation";
+import { FEE_TYPE_EXCLUSION_FILTER } from "@/lib/metrics/rules";
 
 /**
  * Compte de résultat de la plateforme.
@@ -17,8 +18,8 @@ export type CatKey = "fees" | "game_bets" | "game_wins" | "staking" | "referral"
 
 export const CATS: Record<CatKey, { label: string; sign: 1 | -1; hint: string }> = {
   fees: { label: "Frais (hors jeux)", sign: 1, hint: "Swap, retrait, prêts, achat WAKATI" },
-  game_bets: { label: "Mises des joueurs", sign: 1, hint: "Tout ce que les joueurs ont misé (y compris la part jackpot, 5 %)" },
-  game_wins: { label: "Gains payés aux joueurs", sign: -1, hint: "Inclut les gains des tours gratuits et du jackpot" },
+  game_bets: { label: "Mises des joueurs", sign: 1, hint: "Tout ce que les joueurs ont misé (y compris la part jackpot, 5 %). Futures : pertes nettes des traders, frais compris, à la clôture des positions" },
+  game_wins: { label: "Gains payés aux joueurs", sign: -1, hint: "Inclut les gains des tours gratuits et du jackpot. Futures : gains nets des traders à la clôture des positions" },
   staking: { label: "Récompenses de staking", sign: -1, hint: "Versées aux utilisateurs qui stakent" },
   referral: { label: "Bonus de parrainage", sign: -1, hint: "Versés aux parrains" },
   defaults: { label: "Prêts score en défaut", sign: -1, hint: "Montant non remboursé. Les prêts liquidés ne sont pas inclus." }
@@ -148,12 +149,15 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
   const horizon = new Date(now - 400 * DAY).toISOString();
   const txTypes = Object.keys(TX_CAT);
 
-  const [tx, fees, valuer, stake, wallets] = await Promise.all([
-    fetchAll<any>((a, b) => db.from("transactions").select("type, asset_symbol, amount, created_at").eq("status", "completed").in("type", txTypes).gte("created_at", horizon).order("id").range(a, b)),
-    fetchAll<any>((a, b) => db.from("platform_fees").select("asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", "(game_house_edge,game_net_loss)").gte("collected_at", horizon).order("id").range(a, b)),
+  const [tx, fees, valuer, stake, wallets, futuresClosed, futuresCfg] = await Promise.all([
+    fetchAll<any>((a, b) => db.from("transactions").select("type, asset_symbol, amount, created_at, metadata").eq("status", "completed").in("type", txTypes).gte("created_at", horizon).order("id").range(a, b)),
+    fetchAll<any>((a, b) => db.from("platform_fees").select("asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", FEE_TYPE_EXCLUSION_FILTER).gte("collected_at", horizon).order("id").range(a, b)),
     loadValuer(),
     q<any>(db.from("admin_staking_overview").select("total_staked, apr").eq("asset_symbol", WAKATI)),
-    q<any>(db.from("treasury_wallets").select("asset_symbol, balance"))
+    q<any>(db.from("treasury_wallets").select("asset_symbol, balance")),
+    // Futures : résultat RÉALISÉ des positions clôturées (net de tous les frais). La marge d'une position ouverte n'est pas un gain.
+    fetchAll<any>((a, b) => db.from("futures_positions").select("realized_pnl, closed_at").eq("status", "closed").gte("closed_at", horizon).order("closed_at").range(a, b)),
+    q<any>(db.from("futures_config").select("currency_symbol").eq("id", 1))
   ]);
 
   const { prices, wakatiNow, wakatiPeak } = valuer;
@@ -169,7 +173,19 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
     else currentUsd += amount * p;
     events.push({ cat, asset, amount, ts, usd: p === null ? 0 : amount * p });
   };
-  for (const r of tx.rows) { const cat = TX_CAT[r.type]; if (cat) push(cat, String(r.asset_symbol), Number(r.amount), new Date(r.created_at).getTime()); }
+  // Les mouvements de marge du futures (game_bet / game_win avec metadata.game = 'futures') sont ignorés ici :
+  // une marge immobilisée n'est pas une mise encaissée, et une marge rendue n'est pas un gain payé.
+  for (const r of tx.rows) {
+    if (r.metadata?.game === "futures") continue;
+    const cat = TX_CAT[r.type];
+    if (cat) push(cat, String(r.asset_symbol), Number(r.amount), new Date(r.created_at).getTime());
+  }
+  const futuresCur = String(futuresCfg.rows[0]?.currency_symbol ?? WAKATI);
+  for (const r of futuresClosed.rows) {
+    const house = -Number(r.realized_pnl); // résultat de la plateforme = perte nette du trader (frais compris)
+    const ts = new Date(r.closed_at).getTime();
+    if (house > 0) push("game_bets", futuresCur, house, ts); else push("game_wins", futuresCur, -house, ts);
+  }
   for (const r of fees.rows) push("fees", String(r.asset_symbol), Number(r.amount), new Date(r.collected_at).getTime());
 
   const end = now + 1;

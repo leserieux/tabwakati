@@ -1,4 +1,5 @@
 import { getSupabaseAdmin, fetchAll, loadPrices } from "@/lib/data";
+import { FUTURES_FEE_TYPES } from "@/lib/metrics/rules";
 import { isValidPrice } from "@/lib/valuation";
 
 /** Libellés lisibles des types de frais (le type brut reste affiché si inconnu). */
@@ -72,6 +73,8 @@ export async function loadFeesReport(now = Date.now()): Promise<FeesReport> {
     if (r.fee_type === "game_house_edge") {
       houseCount += 1;
       houseUsd += usdOf(r.asset_symbol, Number(r.amount || 0)) ?? 0;
+    } else if ((FUTURES_FEE_TYPES as readonly string[]).includes(String(r.fee_type))) {
+      continue; // futures : déjà dans le résultat réalisé des positions (P&L) — voir lib/metrics/rules.ts
     } else realRows.push(r);
   }
 

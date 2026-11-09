@@ -33,6 +33,7 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/credit", label: "Prêts" },
     { href: "/dashboard/wakati/staking", label: "Staking" },
     { href: "/dashboard/games", label: "Jeux" },
+    { href: "/dashboard/futures", label: "Futures" },
     { href: "/dashboard/pnl/roue", label: "Roue" },
     { href: "/dashboard/markets", label: "Marchés" }
   ] },
