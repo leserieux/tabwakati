@@ -4,20 +4,21 @@
  */
 
 /**
- * Frais écrits dans platform_fees par le trading futures (conservation de l'offre côté trésorerie).
- * Leur montant est déjà compris dans le résultat réalisé des positions (futures_positions.realized_pnl),
- * que le P&L intègre : les compter aussi comme « frais » serait un double comptage.
+ * Trading futures — lignes écrites dans platform_fees par la trésorerie (conservation de l'offre) :
+ *   futures_open_fee, futures_funding_fee, futures_close_fee  = VRAIS FRAIS (revenu) → comptés comme frais ;
+ *   futures_settlement = PERTE DE TRADING des joueurs (transfert zéro-somme, pas un frais) → exclue des frais :
+ *   le P&L l'intègre via les positions clôturées (marge − somme versée − frais), avec les gains payés, une seule fois.
  */
-export const FUTURES_FEE_TYPES = ["futures_open_fee", "futures_settlement"] as const;
+export const FUTURES_PNL_FEE_TYPES = ["futures_settlement"] as const;
 
 /**
  * Types de frais exclus des « frais » du dashboard :
  * - game_house_edge : marge des jeux, déjà comprise dans les mises (sinon double comptage) ;
  * - game_net_loss   : signal de crédit, pas un revenu ;
- * - futures_*       : déjà compris dans le résultat réalisé des positions futures (voir FUTURES_FEE_TYPES).
+ * - futures_settlement : PNL de trading des joueurs, intégré au P&L via les positions (voir FUTURES_PNL_FEE_TYPES).
  * Les lignes is_test = true sont toujours exclues.
  */
-export const EXCLUDED_FEE_TYPES = ["game_house_edge", "game_net_loss", ...FUTURES_FEE_TYPES] as const;
+export const EXCLUDED_FEE_TYPES = ["game_house_edge", "game_net_loss", ...FUTURES_PNL_FEE_TYPES] as const;
 
 /** Valeur à passer à PostgREST : .not("fee_type", "in", FEE_TYPE_EXCLUSION_FILTER) */
 export const FEE_TYPE_EXCLUSION_FILTER = `(${EXCLUDED_FEE_TYPES.join(",")})`;

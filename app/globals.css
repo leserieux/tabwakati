@@ -413,3 +413,28 @@ a { color: inherit; }
 .wk-set-row { border-top: 1px solid var(--line); }
 .wk-set-row summary { cursor: pointer; padding: 12px 2px; font-weight: 500; color: var(--ink); display: flex; justify-content: space-between; gap: 12px; }
 .wk-set-row summary span { color: var(--muted); font-weight: 400; font-size: 13.5px; }
+
+/* ── Futures : résultat de la plateforme (frais encaissés, PNL de trading, net) ── */
+.wk-money { margin-top: 8px; }
+.wk-money-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.wk-money-card { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line-strong); border-radius: 12px; padding: 18px 20px 14px; }
+.wk-money-card-pos { border-left-color: var(--ok); }
+.wk-money-card-neg { border-left-color: var(--bad); }
+.wk-money-period { color: var(--muted); font-size: 13px; font-weight: 500; }
+.wk-money-verdict { margin-top: 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--muted); }
+.wk-money-verdict-pos { color: var(--ok); }
+.wk-money-verdict-neg { color: var(--bad); }
+.wk-money-net { margin-top: 2px; font-size: 30px; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.wk-money-net small { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.wk-money-usd { color: var(--muted); font-size: 13px; min-height: 18px; font-variant-numeric: tabular-nums; }
+.wk-money-rows { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.wk-money-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+.wk-money-row-strong { font-weight: 600; padding: 5px 0; }
+.wk-money-row-sub { color: var(--muted); font-size: 13px; padding-left: 10px; }
+.wk-money-pos { color: var(--ok); }
+.wk-money-neg { color: var(--bad); }
+.wk-money-pending { display: flex; flex-wrap: wrap; gap: 6px 26px; margin-top: 12px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.wk-money-pending b { font-weight: 700; margin-left: 4px; }
+.wk-money-cur { margin-left: auto; color: var(--muted); font-size: 13px; }
+@media (max-width: 1100px) { .wk-money-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .wk-money-grid { grid-template-columns: 1fr; } .wk-money-cur { margin-left: 0; } }

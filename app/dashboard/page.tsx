@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
-import { futuresTodos } from "@/lib/futures";
+import { futuresTodos, loadFuturesMoney } from "@/lib/futures";
+import MoneyHero from "@/app/dashboard/futures/money-hero";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { buildPlans, ensureTodaySnapshot } from "@/lib/custody-policy";
@@ -94,6 +95,7 @@ export default async function TodayPage() {
   const pausedRows = ((paused.data as any[]) || []) as any[];
   if (pausedRows.length) todo.push({ tone: "info", text: `Dépôts suspendus : ${pausedRows.map((p) => p.symbol).join(", ")}.`, href: "/dashboard/settings" });
   todo.push(...(await futuresTodos()));
+  const futuresMoney = await loadFuturesMoney();
   todo.sort((a, b) => ORDER[a.tone] - ORDER[b.tone]);
 
   // ── Statut unique : seuls « bad » et « warn » comptent ; « info » reste informatif ──
@@ -144,6 +146,12 @@ export default async function TodayPage() {
             ))}
           </ul>
         </div>
+      )}
+
+      {futuresMoney.data && (
+        <Section title="Futures : résultat de la plateforme" hint="Frais encaissés et PNL de trading, en WAKATI. Détail dans Produits › Futures.">
+          <MoneyHero money={futuresMoney.data} currency="WAKATI" usdPrice={prices.get("WAKATI") ?? null} compact />
+        </Section>
       )}
 
       <Section title="Aller à" hint={`${usersNew.count || 0} nouvel(s) utilisateur(s) sur 7 jours. Les détails (actifs, flux, frais, transactions) sont dans les sections ci-dessous.`}>

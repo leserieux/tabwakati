@@ -55,7 +55,18 @@ export interface FuturesOverview {
   today: FuturesPeriod; d7: FuturesPeriod; d30: FuturesPeriod; all: FuturesPeriod;
 }
 
+export interface MoneyPeriod {
+  fees_open: number; fees_funding: number; fees_close: number; fees_total: number;
+  trading_pnl: number; net: number; trades: number; liquidations: number; volume: number;
+}
+export interface FuturesMoney {
+  today: MoneyPeriod; d7: MoneyPeriod; d30: MoneyPeriod; all: MoneyPeriod;
+  pending: { open_positions: number; margin_locked: number; accrued_funding: number; unrealized_platform_pnl: number };
+}
+export interface MoneyDay { day: string; fees_open: number; fees_funding: number; fees_close: number; trading_pnl: number; net: number; trades: number; liquidations: number }
+
 export interface FuturesHealth {
+  stale_markets: string | null;
   price: number | null; price_age_s: number | null;
   cron_found: boolean; cron_active: boolean; cron_schedule: string | null;
   cron_last_run: string | null; cron_last_age_s: number | null; cron_last_status: string | null; cron_last_message: string | null;
@@ -64,7 +75,7 @@ export interface FuturesHealth {
 }
 
 export interface OpenPositionRow {
-  id: string; user_id: string; username: string | null; email: string | null;
+  id: string; user_id: string; username: string | null; email: string | null; asset_symbol: string;
   side: "LONG" | "SHORT"; leverage: number; margin: number; notional: number; qty: number;
   entry_price: number; mark_price: number | null; unrealized_pnl: number | null;
   liq_price: number; tp_price: number | null; sl_price: number | null; liq_distance_pct: number | null;
@@ -73,7 +84,7 @@ export interface OpenPositionRow {
 }
 
 export interface ClosedPositionRow {
-  id: string; user_id: string; username: string | null; side: "LONG" | "SHORT"; leverage: number; margin: number;
+  id: string; user_id: string; username: string | null; asset_symbol: string; side: "LONG" | "SHORT"; leverage: number; margin: number;
   entry_price: number; exit_price: number | null; close_reason: string | null;
   realized_pnl: number | null; payout: number | null; fees_open: number; fees_funding: number; fees_close: number;
   opened_at: string; closed_at: string | null;
@@ -149,6 +160,7 @@ export async function loadFuturesHealth(): Promise<{ data: FuturesHealth | null;
         cron_found: !!d?.cron_found, cron_active: !!d?.cron_active, cron_schedule: d?.cron_schedule ?? null,
         cron_last_run: d?.cron_last_run ?? null, cron_last_age_s: d?.cron_last_age_s == null ? null : n(d.cron_last_age_s),
         cron_last_status: d?.cron_last_status ?? null, cron_last_message: d?.cron_last_message ?? null,
+        stale_markets: d?.stale_markets ?? null,
         stale_open_positions: n(d?.stale_open_positions),
         ledger_expected_net: n(d?.ledger_expected_net), ledger_actual_net: n(d?.ledger_actual_net), ledger_diff: n(d?.ledger_diff)
       }
@@ -173,10 +185,17 @@ export async function loadByLeverage(): Promise<{ rows: LeverageBucket[]; error?
 }
 
 export async function loadOpenPositions(): Promise<{ rows: OpenPositionRow[]; error?: string }> {
-  const res = await q<any>(getSupabaseAdmin().from("admin_futures_open_positions").select("*").order("liq_distance_pct", { ascending: true, nullsFirst: false }).limit(200));
+  const db = getSupabaseAdmin();
+  const res = await q<any>(db.from("admin_futures_open_positions").select("*").order("liq_distance_pct", { ascending: true, nullsFirst: false }).limit(200));
+  // La vue n'expose pas l'actif : on le récupère sur la table (id → asset_symbol).
+  const assets = new Map<string, string>();
+  if (res.rows.length) {
+    const a = await q<any>(db.from("futures_positions").select("id, asset_symbol").in("id", res.rows.map((r) => r.id)));
+    a.rows.forEach((x) => assets.set(x.id, x.asset_symbol));
+  }
   return {
     rows: res.rows.map((r) => ({
-      ...r,
+      ...r, asset_symbol: assets.get(r.id) ?? "BTC",
       margin: n(r.margin), notional: n(r.notional), qty: n(r.qty), leverage: n(r.leverage),
       entry_price: n(r.entry_price), mark_price: r.mark_price == null ? null : n(r.mark_price),
       unrealized_pnl: r.unrealized_pnl == null ? null : n(r.unrealized_pnl),
@@ -193,7 +212,7 @@ export async function loadRecentClosed(limit = 25): Promise<{ rows: ClosedPositi
   const db = getSupabaseAdmin();
   const res = await q<any>(
     db.from("futures_positions")
-      .select("id, user_id, side, leverage, margin, entry_price, exit_price, close_reason, realized_pnl, payout, fees_open, fees_funding, fees_close, opened_at, closed_at")
+      .select("id, user_id, asset_symbol, side, leverage, margin, entry_price, exit_price, close_reason, realized_pnl, payout, fees_open, fees_funding, fees_close, opened_at, closed_at")
       .eq("status", "closed").order("closed_at", { ascending: false }).limit(limit)
   );
   const ids = Array.from(new Set(res.rows.map((r) => r.user_id)));
@@ -238,7 +257,7 @@ export async function loadUserFutures(userId: string, limit = 15): Promise<{ row
   const db = getSupabaseAdmin();
   const res = await q<any>(
     db.from("futures_positions")
-      .select("id, user_id, side, leverage, margin, entry_price, exit_price, close_reason, realized_pnl, payout, fees_open, fees_funding, fees_close, opened_at, closed_at, status")
+      .select("id, user_id, asset_symbol, side, leverage, margin, entry_price, exit_price, close_reason, realized_pnl, payout, fees_open, fees_funding, fees_close, opened_at, closed_at, status")
       .eq("user_id", userId).order("opened_at", { ascending: false }).limit(limit)
   );
   return {
@@ -255,6 +274,46 @@ export async function loadUserFutures(userId: string, limit = 15): Promise<{ row
 
 export interface FuturesAlert { tone: "ok" | "warn" | "bad" | "info"; text: string }
 
+const mp = (p: any): MoneyPeriod => ({
+  fees_open: n(p?.fees_open), fees_funding: n(p?.fees_funding), fees_close: n(p?.fees_close), fees_total: n(p?.fees_total),
+  trading_pnl: n(p?.trading_pnl), net: n(p?.net), trades: n(p?.trades), liquidations: n(p?.liquidations), volume: n(p?.volume)
+});
+
+/** Chiffres d'argent du futures, point de vue de la PLATEFORME (+ = elle gagne). Ne lève jamais. */
+export async function loadFuturesMoney(): Promise<{ data: FuturesMoney | null; error?: string }> {
+  try {
+    const { data, error } = await getSupabaseAdmin().rpc("admin_futures_money");
+    if (error) return { data: null, error: error.message };
+    const d: any = data;
+    return {
+      data: {
+        today: mp(d?.today), d7: mp(d?.d7), d30: mp(d?.d30), all: mp(d?.all),
+        pending: {
+          open_positions: n(d?.pending?.open_positions), margin_locked: n(d?.pending?.margin_locked),
+          accrued_funding: n(d?.pending?.accrued_funding), unrealized_platform_pnl: n(d?.pending?.unrealized_platform_pnl)
+        }
+      }
+    };
+  } catch (e: any) {
+    return { data: null, error: e?.message || "Erreur inconnue" };
+  }
+}
+
+export async function loadMoneyDaily(days = 14): Promise<{ rows: MoneyDay[]; error?: string }> {
+  try {
+    const { data, error } = await getSupabaseAdmin().rpc("admin_futures_money_daily", { p_days: days });
+    if (error) return { rows: [], error: error.message };
+    return {
+      rows: ((data as any[]) ?? []).map((r) => ({
+        day: String(r.day), fees_open: n(r.fees_open), fees_funding: n(r.fees_funding), fees_close: n(r.fees_close),
+        trading_pnl: n(r.trading_pnl), net: n(r.net), trades: n(r.trades), liquidations: n(r.liquidations)
+      }))
+    };
+  } catch (e: any) {
+    return { rows: [], error: e?.message || "Erreur inconnue" };
+  }
+}
+
 /** Alertes de santé du moteur (page Futures + « À traiter » de l'accueil). Ne lève jamais. */
 export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | null): FuturesAlert[] {
   const out: FuturesAlert[] = [];
@@ -267,7 +326,7 @@ export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | 
   else if (health.cron_last_age_s !== null && health.cron_last_age_s > 30) out.push({ tone: "bad", text: `La surveillance n'a pas tourné depuis ${Math.round(health.cron_last_age_s)} s (prévu toutes les 5 s).` });
 
   if (health.price === null) out.push({ tone: open > 0 ? "bad" : "warn", text: "Aucun prix disponible pour l'actif futures : ouvertures et fermetures sont refusées." });
-  else if (health.price_age_s !== null && health.price_age_s > 30) out.push({ tone: open > 0 ? "bad" : "warn", text: `Le prix a ${Math.round(health.price_age_s)} s de retard (limite d'ouverture/fermeture : 15 s). Vérifiez le relevé des prix.` });
+  else if (health.price_age_s !== null && health.price_age_s > 30) out.push({ tone: open > 0 ? "bad" : "warn", text: `Prix en retard : ${health.stale_markets ?? `${Math.round(health.price_age_s)} s`} (limite d'ouverture/fermeture : 15 s). Vérifiez le relevé des prix.` });
 
   if (open > 0 && health.stale_open_positions > 0) out.push({ tone: "warn", text: `${health.stale_open_positions} position(s) ouverte(s) non contrôlée(s) depuis plus de 60 s.` });
   if (Math.abs(health.ledger_diff) > 0.01) out.push({ tone: "bad", text: `Écart de rapprochement : le ledger des transactions et les positions diffèrent de ${health.ledger_diff.toLocaleString("fr-FR", { maximumFractionDigits: 4 })}.` });

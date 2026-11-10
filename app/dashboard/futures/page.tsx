@@ -3,8 +3,9 @@ import { formatNumber, formatPct, formatDateTime, formatDate, formatUsd, shortId
 import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote, SegmentBar, Swatch, type Tone } from "@/components/ui";
 import { Field, TextField, Toggle, SettingsCard, SettingsMessages } from "@/components/settings-form";
 import { ConfirmDeleteButton } from "@/app/dashboard/settings/ConfirmDeleteButton";
+import MoneyHero, { sg } from "./money-hero";
 import {
-  loadFuturesOverview, loadFuturesHealth, loadOpenPositions, loadRecentClosed, loadDaily, loadTraders, loadByLeverage, buildAlerts,
+  loadFuturesOverview, loadFuturesHealth, loadOpenPositions, loadRecentClosed, loadMoneyDaily, loadFuturesMoney, loadTraders, loadByLeverage, buildAlerts,
   type FuturesPeriod
 } from "@/lib/futures";
 import { updateFuturesConfig, setFuturesActive, forceClosePosition, forceCloseAll } from "./actions";
@@ -19,18 +20,21 @@ const REASON: Record<string, { label: string; tone: Tone }> = {
   liquidation: { label: "Liquidée", tone: "bad" },
   tp: { label: "Take Profit", tone: "ok" },
   sl: { label: "Stop Loss", tone: "warn" },
+  partial: { label: "Partielle", tone: "info" },
   manual: { label: "Fermée", tone: "info" }
 };
 
 const fmt = (v: number, d = 2) => formatNumber(v, d);
+/** Prix : 2 décimales au-dessus de 100, plus pour les petits actifs (MATIC, etc.). */
+const pxf = (v: number) => (v >= 100 ? formatNumber(v, 2) : v >= 1 ? formatNumber(v, 4) : formatNumber(v, 6));
 const signed = (v: number, d = 2) => `${v > 0 ? "+" : ""}${formatNumber(v, d)}`;
 const tone = (v: number): "ok" | "bad" | undefined => (v > 0.005 ? "ok" : v < -0.005 ? "bad" : undefined);
 const feesOf = (p: FuturesPeriod) => p.fees_open + p.fees_funding + p.fees_close;
 const distTone = (d: number | null): Tone => (d === null ? "info" : d < 3 ? "bad" : d < 8 ? "warn" : "ok");
 
 export default async function FuturesPage({ searchParams }: { searchParams: SettingsParams }) {
-  const [ovRes, healthRes, openRes, closedRes, dailyRes, tradersRes, levRes, prices] = await Promise.all([
-    loadFuturesOverview(), loadFuturesHealth(), loadOpenPositions(), loadRecentClosed(25), loadDaily(14), loadTraders(15), loadByLeverage(), loadPrices()
+  const [ovRes, healthRes, openRes, closedRes, dailyRes, tradersRes, levRes, moneyRes, prices] = await Promise.all([
+    loadFuturesOverview(), loadFuturesHealth(), loadOpenPositions(), loadRecentClosed(25), loadMoneyDaily(14), loadTraders(15), loadByLeverage(), loadFuturesMoney(), loadPrices()
   ]);
 
   const ov = ovRes.data;
@@ -39,7 +43,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
   const usdPrice = prices.get(cur) ?? null;
   const usd = (v: number) => (usdPrice ? `≈ ${formatUsd(v * usdPrice)}` : "");
   const alerts = buildAlerts(ov, healthRes.data);
-  const errors = [ovRes.error, healthRes.error, openRes.error, closedRes.error, dailyRes.error, tradersRes.error, levRes.error].filter(Boolean).join(" · ");
+  const errors = [ovRes.error, healthRes.error, openRes.error, closedRes.error, dailyRes.error, tradersRes.error, levRes.error, moneyRes.error].filter(Boolean).join(" · ");
 
   if (!ov || !cfg) {
     return (
@@ -71,6 +75,9 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
       />
       <SettingsMessages searchParams={searchParams} />
       <ErrorNote text={errors ? `Certaines données n'ont pas pu être lues : ${errors}` : null} />
+
+      {/* ── Résultat de la plateforme : le chiffre qui compte ── */}
+      {moneyRes.data && <MoneyHero money={moneyRes.data} currency={cur} usdPrice={usdPrice} />}
 
       {/* ── Santé du moteur ── */}
       {alerts.length === 0 ? (
@@ -120,13 +127,13 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
               {openRes.rows.map((r) => (
                 <tr key={r.id}>
                   <Td label="Utilisateur"><a className="wk-link" href={`/dashboard/users/${r.user_id}`}>{r.username ?? shortId(r.user_id)}</a></Td>
-                  <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
+                  <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.asset_symbol} · {r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
                   <Td right label="Marge">{fmt(r.margin)}</Td>
                   <Td right label="Taille">{fmt(r.notional, 0)}</Td>
-                  <Td right label="Entrée">{fmt(r.entry_price)}</Td>
-                  <Td right label="Marque">{r.mark_price === null ? "—" : fmt(r.mark_price)}</Td>
+                  <Td right label="Entrée">{pxf(r.entry_price)}</Td>
+                  <Td right label="Marque">{r.mark_price === null ? "—" : pxf(r.mark_price)}</Td>
                   <Td right label="Impact plateforme">{r.unrealized_pnl === null ? "—" : <span className={tone(-r.unrealized_pnl) ? `wk-${tone(-r.unrealized_pnl)}` : ""} title={`PNL latent du trader : ${signed(r.unrealized_pnl)}`}>{signed(-r.unrealized_pnl)}</span>}</Td>
-                  <Td right label="Liquidation">{fmt(r.liq_price)}</Td>
+                  <Td right label="Liquidation">{pxf(r.liq_price)}</Td>
                   <Td right label="Distance"><Pill tone={distTone(r.liq_distance_pct)}>{r.liq_distance_pct === null ? "—" : formatPct(r.liq_distance_pct, 2)}</Pill></Td>
                   <Td right hideSm label="Frais">{fmt(r.fees_open + r.fees_funding)}</Td>
                   <Td hideSm label="Ouverte">{formatDate(r.opened_at)}</Td>
@@ -148,30 +155,26 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
         </div>
       </Section>
 
-      {/* ── Résultat de la plateforme ── */}
-      <Section title="Résultat de la plateforme" hint="Positions clôturées. Résultat plateforme = pertes nettes des traders (frais compris). Les frais sont un revenu ; le reste est un transfert entre traders et plateforme (zéro-somme).">
+      {/* ── Activité par période ── */}
+      <Section title="Activité par période" hint="Positions clôturées.">
         <TableWrap>
           <thead>
-            <tr><Th>Période</Th><Th right>Clôturées</Th><Th right hideSm>Taille traitée</Th><Th right>Frais encaissés</Th><Th right>Résultat plateforme</Th><Th right hideSm>Liquidations</Th><Th right hideSm>TP / SL / Manuel</Th><Th right hideSm>Traders gagnants</Th></tr>
+            <tr><Th>Période</Th><Th right>Clôturées</Th><Th right>Traders</Th><Th right hideSm>Taille traitée</Th><Th right>Liquidations</Th><Th right hideSm>TP / SL / Manuel</Th><Th right hideSm>Traders gagnants</Th></tr>
           </thead>
           <tbody>
             {periods.map(({ label, p }) => (
               <tr key={label}>
                 <Td label="Période">{label}</Td>
-                <Td right label="Clôturées">{p.trades} <span className="wk-asset-sub">({p.traders} trader(s))</span></Td>
+                <Td right label="Clôturées">{p.trades}</Td>
+                <Td right label="Traders">{p.traders}</Td>
                 <Td right hideSm label="Taille traitée">{fmt(p.volume, 0)}</Td>
-                <Td right label="Frais encaissés">{fmt(feesOf(p))} <span className="wk-asset-sub">({fmt(p.fees_open)} ouv. · {fmt(p.fees_funding)} pér. · {fmt(p.fees_close)} ferm.)</span></Td>
-                <Td right label="Résultat plateforme"><span className={tone(p.house_result) ? `wk-${tone(p.house_result)}` : ""}>{signed(p.house_result)} {cur}</span></Td>
-                <Td right hideSm label="Liquidations">{p.liquidations} <span className="wk-asset-sub">({fmt(p.margin_lost_liq, 0)} perdus)</span></Td>
+                <Td right label="Liquidations">{p.liquidations} <span className="wk-asset-sub">({fmt(p.margin_lost_liq, 0)} perdus)</span></Td>
                 <Td right hideSm label="TP / SL / Manuel">{p.tp} / {p.sl} / {p.manual}</Td>
                 <Td right hideSm label="Traders gagnants">{p.trades > 0 ? formatPct((p.wins / p.trades) * 100, 0) : "—"}</Td>
               </tr>
             ))}
           </tbody>
         </TableWrap>
-        <div className="wk-asset-sub" style={{ marginTop: 8 }}>
-          Le Résultat général (Argent › Résultat) intègre ce résultat réalisé, une seule fois : la marge des positions ouvertes n'y est pas comptée comme une mise encaissée, et les frais futures de la trésorerie (futures_open_fee, futures_settlement) sont exclus de la page Frais pour éviter le double comptage.
-        </div>
       </Section>
 
       <Section title="Par tranche de levier" hint="Positions clôturées. Un levier élevé liquide plus souvent : utile pour calibrer le levier maximal et la marge de maintenance.">
@@ -194,22 +197,24 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
         )}
       </Section>
 
-      <Section title="Résultat par jour" hint="14 derniers jours (date de clôture, UTC).">
-        {dailyRes.rows.length === 0 ? <Empty text="Aucune position clôturée." /> : (
+      <Section title="Résultat par jour" hint={`14 derniers jours (UTC), en ${cur}. Point de vue de la plateforme : + = elle gagne.`}>
+        {dailyRes.rows.length === 0 ? <Empty text="Aucune donnée." /> : (
           <TableWrap>
-            <thead><tr><Th>Jour</Th><Th right>Clôturées</Th><Th right hideSm>Traders</Th><Th right hideSm>Taille traitée</Th><Th right>Frais</Th><Th right>Résultat plateforme</Th><Th right hideSm>Liquidations</Th></tr></thead>
+            <thead><tr><Th>Jour</Th><Th right>Frais encaissés</Th><Th right>PNL de trading</Th><Th right>Résultat net</Th><Th right hideSm>Clôturées</Th><Th right hideSm>Liquidations</Th></tr></thead>
             <tbody>
-              {dailyRes.rows.map((d) => (
-                <tr key={d.day}>
-                  <Td label="Jour">{d.day}</Td>
-                  <Td right label="Clôturées">{d.trades}</Td>
-                  <Td right hideSm label="Traders">{d.traders}</Td>
-                  <Td right hideSm label="Taille traitée">{fmt(d.volume_notional, 0)}</Td>
-                  <Td right label="Frais">{fmt(d.fees)}</Td>
-                  <Td right label="Résultat plateforme"><span className={tone(d.house_result) ? `wk-${tone(d.house_result)}` : ""}>{signed(d.house_result)}</span></Td>
-                  <Td right hideSm label="Liquidations">{d.liquidations}</Td>
-                </tr>
-              ))}
+              {dailyRes.rows.map((d) => {
+                const fees = d.fees_open + d.fees_funding + d.fees_close;
+                return (
+                  <tr key={d.day}>
+                    <Td label="Jour">{d.day}</Td>
+                    <Td right label="Frais encaissés"><span className={fees > 0.004 ? "wk-money-pos" : ""}>{sg(fees)}</span></Td>
+                    <Td right label="PNL de trading"><span className={d.trading_pnl > 0.004 ? "wk-money-pos" : d.trading_pnl < -0.004 ? "wk-money-neg" : ""}>{sg(d.trading_pnl)}</span></Td>
+                    <Td right label="Résultat net"><b className={d.net > 0.004 ? "wk-money-pos" : d.net < -0.004 ? "wk-money-neg" : ""}>{sg(d.net)}</b></Td>
+                    <Td right hideSm label="Clôturées">{d.trades}</Td>
+                    <Td right hideSm label="Liquidations">{d.liquidations}</Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </TableWrap>
         )}
@@ -254,9 +259,9 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
                 return (
                   <tr key={r.id}>
                     <Td label="Utilisateur"><a className="wk-link" href={`/dashboard/users/${r.user_id}`}>{r.username ?? shortId(r.user_id)}</a></Td>
-                    <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
+                    <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.asset_symbol} · {r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
                     <Td right label="Marge">{fmt(r.margin)}</Td>
-                    <Td right hideSm label="Entrée → Sortie">{fmt(r.entry_price)} → {r.exit_price === null ? "—" : fmt(r.exit_price)}</Td>
+                    <Td right hideSm label="Entrée → Sortie">{pxf(r.entry_price)} → {r.exit_price === null ? "—" : pxf(r.exit_price)}</Td>
                     <Td label="Motif"><Pill tone={rs.tone}>{rs.label}</Pill></Td>
                     <Td right label="Résultat net"><span className={tone(pnl) ? `wk-${tone(pnl)}` : ""}>{signed(pnl)}</span></Td>
                     <Td right hideSm label="Frais">{fmt(r.fees_open + r.fees_funding + r.fees_close)}</Td>

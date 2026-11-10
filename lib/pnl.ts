@@ -17,9 +17,9 @@ import { FEE_TYPE_EXCLUSION_FILTER } from "@/lib/metrics/rules";
 export type CatKey = "fees" | "game_bets" | "game_wins" | "staking" | "referral" | "defaults";
 
 export const CATS: Record<CatKey, { label: string; sign: 1 | -1; hint: string }> = {
-  fees: { label: "Frais (hors jeux)", sign: 1, hint: "Swap, retrait, prêts, achat WAKATI" },
-  game_bets: { label: "Mises des joueurs", sign: 1, hint: "Tout ce que les joueurs ont misé (y compris la part jackpot, 5 %). Futures : pertes nettes des traders, frais compris, à la clôture des positions" },
-  game_wins: { label: "Gains payés aux joueurs", sign: -1, hint: "Inclut les gains des tours gratuits et du jackpot. Futures : gains nets des traders à la clôture des positions" },
+  fees: { label: "Frais (hors jeux)", sign: 1, hint: "Swap, retrait, prêts, achat WAKATI, frais futures (ouverture, périodiques, fermeture)" },
+  game_bets: { label: "Mises des joueurs", sign: 1, hint: "Tout ce que les joueurs ont misé (y compris la part jackpot, 5 %). Futures : pertes de trading des joueurs (hors frais), à la clôture des positions" },
+  game_wins: { label: "Gains payés aux joueurs", sign: -1, hint: "Inclut les gains des tours gratuits et du jackpot. Futures : gains de trading des joueurs (hors frais), à la clôture des positions" },
   staking: { label: "Récompenses de staking", sign: -1, hint: "Versées aux utilisateurs qui stakent" },
   referral: { label: "Bonus de parrainage", sign: -1, hint: "Versés aux parrains" },
   defaults: { label: "Prêts score en défaut", sign: -1, hint: "Montant non remboursé. Les prêts liquidés ne sont pas inclus." }
@@ -155,8 +155,8 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
     loadValuer(),
     q<any>(db.from("admin_staking_overview").select("total_staked, apr").eq("asset_symbol", WAKATI)),
     q<any>(db.from("treasury_wallets").select("asset_symbol, balance")),
-    // Futures : résultat RÉALISÉ des positions clôturées (net de tous les frais). La marge d'une position ouverte n'est pas un gain.
-    fetchAll<any>((a, b) => db.from("futures_positions").select("realized_pnl, closed_at").eq("status", "closed").gte("closed_at", horizon).order("closed_at").range(a, b)),
+    // Futures : PNL de trading RÉALISÉ des positions clôturées. La marge d'une position ouverte n'est pas un gain.
+    fetchAll<any>((a, b) => db.from("futures_positions").select("margin, payout, fees_funding, fees_close, closed_at").eq("status", "closed").gte("closed_at", horizon).order("closed_at").range(a, b)),
     q<any>(db.from("futures_config").select("currency_symbol").eq("id", 1))
   ]);
 
@@ -182,7 +182,9 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
   }
   const futuresCur = String(futuresCfg.rows[0]?.currency_symbol ?? WAKATI);
   for (const r of futuresClosed.rows) {
-    const house = -Number(r.realized_pnl); // résultat de la plateforme = perte nette du trader (frais compris)
+    // PNL de trading de la plateforme = marge − somme versée − frais périodiques − frais de fermeture (hors frais).
+    // Les frais (ouverture, périodiques, fermeture) sont comptés à part, via platform_fees (catégorie « Frais »).
+    const house = Number(r.margin) - Number(r.payout ?? 0) - Number(r.fees_funding ?? 0) - Number(r.fees_close ?? 0);
     const ts = new Date(r.closed_at).getTime();
     if (house > 0) push("game_bets", futuresCur, house, ts); else push("game_wins", futuresCur, -house, ts);
   }
