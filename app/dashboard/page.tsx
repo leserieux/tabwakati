@@ -1,5 +1,6 @@
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
-import { futuresTodos } from "@/lib/futures";
+import { futuresTodos, loadFuturesMoney } from "@/lib/futures";
+import MoneyHero from "@/app/dashboard/futures/money-hero";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { buildPlans, ensureTodaySnapshot } from "@/lib/custody-policy";
@@ -16,15 +17,9 @@ export const dynamic = "force-dynamic";
 const DAY = 24 * 3600 * 1000;
 const EPS = 0.00000001;
 
+/** Une ligne de la liste « À traiter » : ce qui ne va pas, et la page où le traiter. */
 type Todo = { tone: Tone; text: string; href: string };
 const ORDER: Record<Tone, number> = { bad: 0, warn: 1, info: 2, ok: 3 };
-
-/** Regroupe les alertes par page d'action et niveau pour éviter de répéter la même destination. */
-function addTodo(list: Todo[], item: Todo) {
-  const existing = list.find((t) => t.href === item.href && t.tone === item.tone);
-  if (!existing) return void list.push(item);
-  if (!existing.text.includes(item.text)) existing.text = `${existing.text} · ${item.text}`;
-}
 
 export default async function TodayPage() {
   const db = getSupabaseAdmin();
@@ -50,11 +45,13 @@ export default async function TodayPage() {
     loadPrices()
   ]);
 
+  // Couverture : custody réelle (on-chain + PawaPay), comme la page Solvabilité.
   const sol = await loadSolvencyLines(prices);
   const lines = [...sol.crypto, ...sol.mobile];
   const cov = computeCoverage(lines.filter((l) => l.have !== null).map((l) => ({ asset: l.asset, owed: l.owe, held: l.have as number, price: l.priceUsd })));
   const unreadable = lines.filter((l) => l.have === null).map((l) => l.asset);
   const coveragePct = sol.error || Number.isNaN(cov.coveragePct) ? null : cov.coveragePct;
+
   const volume7d = (((volume.data as any[]) || []) as any[]).filter((r) => r.category !== "game").reduce((s, r) => s + Number(r.volume_usd || 0), 0);
   const atRisk = Number((credit.data as any)?.loans_a_risque || 0) + Number((credit.data as any)?.score_loans_a_risque || 0);
   const pendingCount = pending.count || 0;
@@ -62,117 +59,120 @@ export default async function TodayPage() {
   const failedCount = failed.count || 0;
   const sweepFailCount = sweepFails.count || 0;
 
+  // ── À traiter : chaque ligne renvoie vers la page où l'on agit ──
+  // Réserve de retrait : jamais bloquant pour l'accueil (si ça échoue, on n'affiche simplement pas l'alerte).
   let custodySummary: ReturnType<typeof summarizeCustody> | null = null;
   try {
     const { plans } = await buildPlans(sol);
     custodySummary = summarizeCustody(plans);
-    await ensureTodaySnapshot(plans);
+    await ensureTodaySnapshot(plans); // relevé quotidien, même si personne n'ouvre la page « Réserve de retrait »
   } catch (e) {
     console.error("[accueil] réserve de retrait non calculée:", e);
   }
 
   const todo: Todo[] = [];
-  if (custodySummary?.danger.length) addTodo(todo, { tone: "bad", text: `Retrait important potentiellement bloqué : ${custodySummary.danger.map((p) => p.asset).join(", ")}. Recharger les portefeuilles concernés.`, href: "/dashboard/treasury" });
-  if (custodySummary?.refill.length) addTodo(todo, { tone: "warn", text: `Portefeuilles de retrait à réapprovisionner bientôt : ${custodySummary.refill.map((p) => p.asset).join(", ")}.`, href: "/dashboard/treasury" });
-  if (cov.missingUsd > 0.01) addTodo(todo, { tone: "bad", text: `Déficit de couverture estimé : ${formatUsd(cov.missingUsd)}.`, href: "/dashboard/treasury" });
-  if (sol.error) addTodo(todo, { tone: "bad", text: `Couverture non calculable : ${sol.error}.`, href: "/dashboard/treasury" });
-  if (unreadable.length) addTodo(todo, { tone: "warn", text: `Soldes réels illisibles (exclus de la couverture) : ${unreadable.join(", ")}.`, href: "/dashboard/treasury" });
-  if (cov.unpriced.length) addTodo(todo, { tone: "warn", text: `Cours manquants ou invalides : ${cov.unpriced.join(", ")}.`, href: "/dashboard/treasury" });
-
-  const reconBad: string[] = [];
-  const reconWarn: string[] = [];
+  if (custodySummary && custodySummary.danger.length) todo.push({ tone: "bad", text: `Un gros retrait pourrait échouer sur : ${custodySummary.danger.map((p) => p.asset).join(", ")}. Ajoute de l'argent sur les portefeuilles concernés.`, href: "/dashboard/treasury" });
+  if (custodySummary && custodySummary.refill.length) todo.push({ tone: "warn", text: `Portefeuille de retrait à remplir bientôt : ${custodySummary.refill.map((p) => p.asset).join(", ")}.`, href: "/dashboard/treasury" });
+  if (cov.missingUsd > 0.01) todo.push({ tone: "bad", text: `Il manque environ ${formatUsd(cov.missingUsd)} pour couvrir ce que tu dois aux utilisateurs.`, href: "/dashboard/treasury" });
+  if (sol.error) todo.push({ tone: "bad", text: `Couverture non calculable : ${sol.error}.`, href: "/dashboard/treasury" });
+  if (unreadable.length) todo.push({ tone: "warn", text: `Solde réel illisible pour : ${unreadable.join(", ")} (exclus de la couverture).`, href: "/dashboard/treasury" });
+  if (cov.unpriced.length) todo.push({ tone: "warn", text: `Sans prix valide : ${cov.unpriced.join(", ")}.`, href: "/dashboard/treasury" });
   for (const row of ((recon.data as any[]) || [])) {
-    if (Math.abs(Number(row.liability_diff || 0)) > EPS) reconBad.push(`${row.asset_symbol} : écart de rapprochement ${formatNumber(Number(row.liability_diff))}`);
-    if (Number(row.negative_rows || 0) > 0) reconBad.push(`${row.asset_symbol} : ${row.negative_rows} solde(s) négatif(s)`);
-    if (Math.abs(Number(row.staking_orphan || 0)) > EPS) reconWarn.push(`${row.asset_symbol} : ${formatNumber(Number(row.staking_orphan))} en staking sans stake correspondant`);
+    if (Math.abs(Number(row.liability_diff || 0)) > EPS) todo.push({ tone: "bad", text: `${row.asset_symbol} : écart de rapprochement de ${formatNumber(Number(row.liability_diff))}.`, href: "/dashboard/controls" });
+    if (Number(row.negative_rows || 0) > 0) todo.push({ tone: "bad", text: `${row.asset_symbol} : ${row.negative_rows} solde(s) négatif(s).`, href: "/dashboard/controls" });
+    if (Math.abs(Number(row.staking_orphan || 0)) > EPS) todo.push({ tone: "warn", text: `${row.asset_symbol} : ${formatNumber(Number(row.staking_orphan))} en staking sans stake correspondant.`, href: "/dashboard/controls" });
   }
-  if (reconBad.length) addTodo(todo, { tone: "bad", text: reconBad.join(" · "), href: "/dashboard/controls" });
-  if (reconWarn.length) addTodo(todo, { tone: "warn", text: reconWarn.join(" · "), href: "/dashboard/controls" });
-
   const badControls = controls.controls.filter((c) => c.status === "bad");
   const warnControls = controls.controls.filter((c) => c.status === "warn");
-  if (badControls.length) addTodo(todo, { tone: "bad", text: `${badControls.length} contrôle(s) en échec : ${badControls.map((c) => c.label).join(" · ")}.`, href: "/dashboard/controls" });
-  if (warnControls.length) addTodo(todo, { tone: "warn", text: `${warnControls.length} contrôle(s) à surveiller : ${warnControls.map((c) => c.label).join(" · ")}.`, href: "/dashboard/controls" });
-  if (controls.error) addTodo(todo, { tone: "warn", text: `Contrôles automatiques non exécutés : ${controls.error}.`, href: "/dashboard/controls" });
-  if (atRisk > 0) addTodo(todo, { tone: "bad", text: `${atRisk} prêt(s) à surveiller (risque LTV ou échéance dépassée).`, href: "/dashboard/credit" });
-  if (pendingCount > 0) addTodo(todo, { tone: "warn", text: `${pendingCount} transaction(s) en attente${stuckCount > 0 ? `, dont ${stuckCount} depuis plus d'une heure` : ""}.`, href: "/dashboard/transactions" });
-  if (failedCount > 0) addTodo(todo, { tone: "warn", text: `${failedCount} transaction(s) en échec ces dernières 24 heures.`, href: "/dashboard/transactions?status=failed" });
-  if (sweepFailCount > 0) addTodo(todo, { tone: "warn", text: `${sweepFailCount} balayage(s) en échec cette semaine.`, href: "/dashboard/sweep" });
-  if (pnl30 && pnl30.current.net < -0.005) addTodo(todo, { tone: "warn", text: `Résultat net négatif sur 30 jours : ${formatUsd(pnl30.current.net)}.`, href: "/dashboard/pnl" });
+  if (badControls.length) todo.push({ tone: "bad", text: `${badControls.length} contrôle(s) en échec : ${badControls.map((c) => c.label).join(" · ")}.`, href: "/dashboard/controls" });
+  if (warnControls.length) todo.push({ tone: "warn", text: `${warnControls.length} contrôle(s) à surveiller : ${warnControls.map((c) => c.label).join(" · ")}.`, href: "/dashboard/controls" });
+  if (controls.error) todo.push({ tone: "warn", text: `Contrôles automatiques non exécutés : ${controls.error}.`, href: "/dashboard/controls" });
+  if (atRisk > 0) todo.push({ tone: "bad", text: `${atRisk} prêt(s) à surveiller (marge LTV faible ou échéance dépassée).`, href: "/dashboard/credit" });
+  if (pendingCount > 0) todo.push({ tone: "warn", text: `${pendingCount} transaction(s) en attente${stuckCount > 0 ? `, dont ${stuckCount} depuis plus d'une heure` : ""}.`, href: "/dashboard/transactions" });
+  if (failedCount > 0) todo.push({ tone: "warn", text: `${failedCount} transaction(s) ont échoué ces dernières 24 heures.`, href: "/dashboard/transactions?status=failed" });
+  if (sweepFailCount > 0) todo.push({ tone: "warn", text: `${sweepFailCount} balayage(s) en échec cette semaine.`, href: "/dashboard/sweep" });
+  if (pnl30 && pnl30.current.net < -0.005) todo.push({ tone: "warn", text: `Résultat net des 30 derniers jours : ${formatUsd(pnl30.current.net)}.`, href: "/dashboard/pnl" });
   const pausedRows = ((paused.data as any[]) || []) as any[];
-  if (pausedRows.length) addTodo(todo, { tone: "info", text: `Dépôts suspendus : ${pausedRows.map((p) => p.symbol).join(", ")}.`, href: "/dashboard/settings" });
-  for (const item of await futuresTodos()) addTodo(todo, item);
+  if (pausedRows.length) todo.push({ tone: "info", text: `Dépôts suspendus : ${pausedRows.map((p) => p.symbol).join(", ")}.`, href: "/dashboard/settings" });
+  todo.push(...(await futuresTodos()));
+  const futuresMoney = await loadFuturesMoney();
   todo.sort((a, b) => ORDER[a.tone] - ORDER[b.tone]);
 
+  // ── Statut unique : seuls « bad » et « warn » comptent ; « info » reste informatif ──
   const nBad = todo.filter((t) => t.tone === "bad").length;
   const nWarn = todo.filter((t) => t.tone === "warn").length;
   const tone: "ok" | "warn" | "bad" = nBad > 0 ? "bad" : nWarn > 0 ? "warn" : "ok";
+  const hero =
+    tone === "ok"
+      ? { icon: "check" as const, title: "Tout va bien", text: "Couverture, contrôles, transactions et prêts sont au vert." }
+      : { icon: "alert" as const, title: tone === "bad" ? `${nBad + nWarn} point(s) à traiter, dont ${nBad} prioritaire(s)` : `${nWarn} point(s) à surveiller`, text: "Chaque ligne ci-dessous ou l’icône d’alerte vous aide à identifier la suite à faire." };
+
   const net30 = pnl30?.current.net ?? null;
   const queryErrors = [usersTotal.error?.message, usersActive.error?.message, usersNew.error?.message, volume.error?.message, credit.error?.message, recon.error?.message].filter(Boolean).join(" · ");
-  const shortcuts = ["money", "users", "products", "wakati", "system"].map((key) => NAV.find((entry) => entry.key === key)).filter((entry) => entry && entry.tabs);
 
   return (
-    <div className="wk-exchange-dashboard">
-      <PageHeader title="Vue d’ensemble" subtitle="Performance, activité et santé opérationnelle de la plateforme." updatedAt={formatDateTime(new Date())} />
+    <div>
+      <PageHeader title="Aujourd'hui" subtitle="Ce qui demande ton attention maintenant. Le détail est dans les autres sections." updatedAt={formatDateTime(new Date())} />
       <ErrorNote text={queryErrors ? `Certaines données sont indisponibles : ${queryErrors}` : null} />
 
-      <div className={`wk-exchange-status wk-exchange-status-${tone}`}>
-        <div className="wk-exchange-status-copy">
-          <span className="wk-exchange-status-indicator" />
-          <div>
-            <div className="wk-exchange-eyebrow">ÉTAT DE LA PLATEFORME</div>
-            <h2>{tone === "ok" ? "Opérations nominales" : tone === "bad" ? "Action prioritaire requise" : "Surveillance recommandée"}</h2>
-            <p>{tone === "ok" ? "Aucune alerte prioritaire détectée dans les contrôles suivis." : `${nBad} priorité(s) · ${nWarn} alerte(s) à surveiller. Consultez la file d’actions ci-dessous.`}</p>
+      <div className={`wk-hero wk-hero-${tone}`}>
+        <div className="wk-hero-top">
+          <div className="wk-hero-msg">
+            <span className={`wk-hero-icon wk-hero-icon-${tone}`}><Icon name={hero.icon} size={26} /></span>
+            <div>
+              <h2 className="wk-hero-title">{hero.title}</h2>
+              <p className="wk-hero-text">{hero.text}</p>
+            </div>
+          </div>
+          <div className="wk-figures">
+            <Figure label="Couverture" value={coveragePct === null ? "—" : formatPct(coveragePct)} />
+            <Figure label="Résultat 30 j" value={net30 === null ? "—" : formatCompactUsd(net30)} />
+            <Figure label="Actifs 7 j" value={`${formatCompactNumber(usersActive.count || 0)} / ${formatCompactNumber(usersTotal.count || 0)}`} />
+            <Figure label="Volume 7 j" value={formatCompactUsd(volume7d)} />
           </div>
         </div>
-        <div className="wk-exchange-status-meta">Mis à jour {formatDateTime(new Date())}</div>
       </div>
 
-      <Section title="Indicateurs clés" hint="Repères de pilotage sur des périodes définies. Les montants sont des estimations au cours courant.">
-        <div className="wk-exchange-kpis">
-          <Kpi label="Volume traité · 7 j" value={formatCompactUsd(volume7d)} detail="Hors mises de jeux" href="/dashboard/transactions" />
-          <Kpi label="Résultat net · 30 j" value={net30 === null ? "—" : formatCompactUsd(net30)} detail="Revenus moins coûts suivis" href="/dashboard/pnl" tone={net30 === null ? "neutral" : net30 >= 0 ? "positive" : "negative"} />
-          <Kpi label="Utilisateurs actifs · 7 j" value={formatCompactNumber(usersActive.count || 0)} detail={`${formatCompactNumber(usersTotal.count || 0)} au total · +${formatCompactNumber(usersNew.count || 0)} nouveaux`} href="/dashboard/users" />
-          <Kpi label="Couverture des passifs" value={coveragePct === null ? "—" : formatPct(coveragePct)} detail="Réserves comparées aux soldes dus" href="/dashboard/treasury" tone={coveragePct === null ? "neutral" : coveragePct >= 100 ? "positive" : "negative"} />
+      {todo.length > 0 && (
+        <div className="wk-todo">
+          <h3 className="wk-todo-title">À traiter</h3>
+          <ul className="wk-todo-list">
+            {todo.map((t, i) => (
+              <li key={`${t.text}-${i}`} className="wk-todo-item">
+                <span className={`wk-dot wk-dot-${t.tone}`} style={{ marginTop: 7 }} />
+                <span style={{ flex: 1 }}>{t.text}</span>
+                <a className="wk-link" href={t.href} style={{ whiteSpace: "nowrap" }}>Ouvrir →</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {futuresMoney.data && (
+        <Section title="Futures : résultat de la plateforme" hint="Frais encaissés et PNL de trading, en WAKATI. Détail dans Produits › Futures.">
+          <MoneyHero money={futuresMoney.data} currency="WAKATI" usdPrice={prices.get("WAKATI") ?? null} compact />
+        </Section>
+      )}
+
+      <Section title="Aller à" hint={`${usersNew.count || 0} nouvel(s) utilisateur(s) sur 7 jours. Les détails (actifs, flux, frais, transactions) sont dans les sections ci-dessous.`}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+          {NAV.filter((e) => e.tabs).map((entry) => (
+            <div key={entry.key} className="wk-panel">
+              <a href={entry.href} className="wk-link" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15 }}>
+                <Icon name={entry.icon} size={16} />{entry.label}
+              </a>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", marginTop: 10 }}>
+                {entry.tabs!.map((tab) => <a key={tab.href} href={tab.href} className="wk-asset-sub">{tab.label}</a>)}
+              </div>
+            </div>
+          ))}
         </div>
       </Section>
-
-      <div className="wk-exchange-lower">
-        <section className="wk-exchange-panel wk-exchange-actions">
-          <div className="wk-exchange-panel-head">
-            <div><div className="wk-exchange-eyebrow">CENTRE DE CONTRÔLE</div><h2>Actions requises</h2></div>
-            <span className={`wk-exchange-count wk-exchange-count-${tone}`}>{nBad + nWarn} à traiter</span>
-          </div>
-          {todo.length ? (
-            <ul className="wk-exchange-todo">
-              {todo.map((t, i) => <li key={`${t.href}-${t.tone}-${i}`} className={`wk-exchange-todo-item wk-exchange-todo-${t.tone}`}>
-                <span className="wk-exchange-todo-marker" />
-                <span className="wk-exchange-todo-text">{t.text}</span>
-                <a href={t.href} aria-label={`Ouvrir ${t.href}`}>Voir →</a>
-              </li>)}
-            </ul>
-          ) : <div className="wk-exchange-empty"><span>✓</span><div><strong>Rien à traiter</strong><p>Les contrôles disponibles ne signalent aucune action urgente.</p></div></div>}
-        </section>
-
-        <section className="wk-exchange-panel wk-exchange-shortcuts">
-          <div className="wk-exchange-panel-head"><div><div className="wk-exchange-eyebrow">ACCÈS RAPIDE</div><h2>Espaces de pilotage</h2></div></div>
-          <div className="wk-exchange-links">
-            {shortcuts.map((entry) => entry && <article key={entry.key} className="wk-exchange-link-card">
-              <a href={entry.href}><span className="wk-exchange-link-icon"><Icon name={entry.icon} size={17} /></span><strong>{entry.label}</strong><span aria-hidden="true">↗</span></a>
-              <div>{entry.tabs!.slice(0, 3).map((tab) => <a key={tab.href} href={tab.href}>{tab.label}</a>)}</div>
-            </article>)}
-          </div>
-        </section>
-      </div>
     </div>
   );
 }
 
-function Kpi({ label, value, detail, href, tone = "neutral" }: { label: string; value: string; detail: string; href: string; tone?: "neutral" | "positive" | "negative" }) {
-  return <a className={`wk-exchange-kpi wk-exchange-kpi-${tone}`} href={href}>
-    <span className="wk-exchange-kpi-label">{label}</span>
-    <strong className="wk-exchange-kpi-value">{value}</strong>
-    <span className="wk-exchange-kpi-detail">{detail}</span>
-    <span className="wk-exchange-kpi-arrow" aria-hidden="true">↗</span>
-  </a>;
+function Figure({ label, value }: { label: string; value: string }) {
+  return <div className="wk-figure"><div className="wk-figure-label">{label}</div><div className="wk-figure-value">{value}</div></div>;
 }
+
