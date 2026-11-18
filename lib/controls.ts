@@ -60,20 +60,19 @@ async function extraControls(): Promise<Control[]> {
   try {
     const { data, error } = await db.rpc("admin_staking_plan");
     if (!error && data) {
-      const pools: any[] = (data as any).pools ?? [];
-      const unpaid = pools.filter((p) => p.is_active && Number(p.base_apy) > 0 && !p.engine_pays);
-      const withStakers = unpaid.filter((p) => Number(p.staked) > 0);
-      const names = (l: any[]) => l.map((p) => `${p.name} (${p.asset_symbol} ${Number(p.base_apy)} %)`).join(", ");
-      out.push({
-        check_key: "staking_interest_engine", category: "Opérations", label: "Intérêts de staking réellement crédités",
-        status: withStakers.length ? "bad" : unpaid.length ? "warn" : "ok",
-        value: unpaid.length ? `${unpaid.length} plan(s) sans intérêts` : "tous les plans actifs",
-        detail: withStakers.length
-          ? `Des utilisateurs sont stakés sur des plans qui affichent un taux mais n'accumulent aucun intérêt : ${names(withStakers)}. Le calcul quotidien ne crédite que le plan WAKATI.`
-          : unpaid.length
-            ? `Plans actifs sans intérêts crédités (personne n'y est staké pour l'instant) : ${names(unpaid)}.`
-            : "Chaque plan actif qui affiche un taux est couvert par le calcul quotidien d'intérêts."
-      });
+      const e: any = (data as any).engine ?? {};
+      const last: string | null = e.last_run_date ?? null;
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
+      const cron = e.cron;
+      let status: ControlStatus = "ok";
+      let detail = `Le calcul d'intérêts de tous les plans de staking a tourné le ${last}.`;
+      if (!cron) { status = "bad"; detail = "La tâche « kiss-daily-staking-rewards » n'existe pas : plus aucun intérêt n'est calculé."; }
+      else if (!cron.active) { status = "bad"; detail = "La tâche « kiss-daily-staking-rewards » est désactivée : plus aucun intérêt n'est calculé."; }
+      else if (!last || last < yesterday) { status = "bad"; detail = `Aucun calcul d'intérêts depuis le ${last ?? "début"} : les stakers perdent des intérêts chaque jour.`; }
+      else if (last < today && now.getUTCHours() >= 2) { status = "warn"; detail = `Le calcul du ${today} (UTC) n'a pas encore tourné (dernier : ${last}).`; }
+      out.push({ check_key: "staking_interest_engine", category: "Tâches planifiées", label: "Calcul quotidien des intérêts de staking", status, value: last ? `dernier : ${last}` : "jamais", detail });
     }
   } catch { /* idem */ }
   return out;

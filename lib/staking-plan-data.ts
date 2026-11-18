@@ -5,7 +5,7 @@ import type { StakingPool, UnstakeStat } from "@/lib/staking-plan";
 
 export interface UpcomingUnlock { asset: string; pool: string; amount: number; unlockAt: string; userId: string; user: string | null }
 export interface EngineInfo {
-  apr: number; lastAccrualAt: string | null;
+  lastAccrualAt: string | null; lastRunDate: string | null;
   cron: { active: boolean; schedule: string; lastRun: string | null; lastStatus: string | null; lastMessage: string | null } | null;
 }
 export interface StakingPlanData { generatedAt: string; engine: EngineInfo; pools: StakingPool[]; upcoming: UpcomingUnlock[]; unstake: UnstakeStat[] }
@@ -31,7 +31,7 @@ export async function loadStakingPlanData(): Promise<{ data: StakingPlanData | n
       data: {
         generatedAt: String(d.generated_at ?? ""),
         engine: {
-          apr: n(d.engine?.apr), lastAccrualAt: d.engine?.last_accrual_at ?? null,
+          lastAccrualAt: d.engine?.last_accrual_at ?? null, lastRunDate: d.engine?.last_run_date ?? null,
           cron: c ? { active: !!c.active, schedule: String(c.schedule ?? ""), lastRun: c.last_run ?? null, lastStatus: c.last_status ?? null, lastMessage: c.last_message ?? null } : null
         },
         pools,
