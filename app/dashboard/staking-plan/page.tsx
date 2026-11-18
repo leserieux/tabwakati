@@ -1,6 +1,6 @@
 import { loadPrices } from "@/lib/data";
 import { loadSolvencyLines } from "@/lib/solvency";
-import { buildPlans } from "@/lib/custody-policy";
+import { buildPlans, loadSwapStock } from "@/lib/custody-policy";
 import type { PlanLine } from "@/lib/custody-plan";
 import { loadStakingPlanData } from "@/lib/staking-plan-data";
 import {
@@ -37,8 +37,9 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
   const scenario: Scenario = searchParams.s === "prudent" || searchParams.s === "extreme" ? searchParams.s : "normal";
 
   const prices = await loadPrices();
-  const [planRes, sol] = await Promise.all([
+  const [planRes, treasury, sol] = await Promise.all([
     loadStakingPlanData(),
+    loadSwapStock().catch(() => new Map<string, number>()),
     loadSolvencyLines(prices).catch((e: any) => ({ crypto: [], mobile: [], error: e?.message || "Lecture des soldes impossible" as string | null }))
   ]);
   const plans: PlanLine[] = (await buildPlans({ crypto: sol.crypto, mobile: sol.mobile }).catch(() => ({ plans: [] as PlanLine[] }))).plans;
@@ -67,10 +68,10 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
   const totals = totalsOf(decisions);
 
   // Alertes
-  const unpaid = data.pools.filter((p) => p.isActive && p.baseApy > 0 && !p.enginePays);
-  const unpaidWithStakers = unpaid.filter((p) => p.staked > 0);
   const cron = data.engine.cron;
   const accrualAgeH = data.engine.lastAccrualAt ? (Date.now() - new Date(data.engine.lastAccrualAt).getTime()) / 3_600_000 : null;
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const missedToday = data.engine.lastRunDate !== null && data.engine.lastRunDate < todayUtc && new Date().getUTCHours() >= 2;
   const shortfalls = decisions.filter((d) => d.verdict === "shortfall");
 
   const link = (h: number, s: Scenario) => `/dashboard/staking-plan?h=${h}&s=${s}`;
@@ -90,16 +91,9 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
       <ErrorNote text={sol.error ? `Soldes détenus partiellement illisibles : ${sol.error}. Les décisions concernées sont marquées « solde illisible ».` : null} />
 
       {/* ── Alertes ── */}
-      {unpaidWithStakers.length > 0 && (
-        <div className="wk-alert-bad">
-          Intérêts non versés : {unpaidWithStakers.map((p) => `${p.name} (${p.asset}, ${p.baseApy} % promis, ${p.stakers} staker(s), ${n4(p.staked)} stakés)`).join(" ; ")} — le moteur quotidien ne crédite des intérêts qu'au plan WAKATI. Ces stakers n'accumulent rien alors que l'app affiche un taux : à corriger avant tout envoi on-chain.
-        </div>
-      )}
-      {unpaidWithStakers.length === 0 && unpaid.length > 0 && (
-        <div className="wk-alert-warn">Plans actifs qui affichent un taux mais que le moteur d'intérêts ne paie pas : {unpaid.map((p) => `${p.name} (${p.asset} ${p.baseApy} %)`).join(", ")}. Personne n'y est staké pour l'instant ; le premier staker n'accumulera aucun intérêt tant que le moteur n'est pas étendu à ces plans.</div>
-      )}
       {cron === null && <div className="wk-alert-bad">La tâche d'intérêts quotidiens (kiss-daily-staking-rewards) n'existe pas : aucun intérêt n'est calculé.</div>}
       {cron && (!cron.active || (cron.lastStatus && cron.lastStatus !== "succeeded")) && <div className="wk-alert-bad">Tâche d'intérêts quotidiens en défaut ({!cron.active ? "désactivée" : cron.lastStatus}){cron.lastMessage ? ` : ${cron.lastMessage}` : ""}.</div>}
+      {missedToday && <div className="wk-alert-warn">Le calcul d'intérêts du {todayUtc} (UTC) n'a pas encore tourné : dernier calcul enregistré le {data.engine.lastRunDate}. Attendu chaque jour à {cron?.schedule ?? "00:05"}.</div>}
       {accrualAgeH !== null && accrualAgeH > 36 && <div className="wk-alert-warn">Dernier calcul d'intérêts il y a {Math.round(accrualAgeH)} h (attendu chaque jour).</div>}
       {shortfalls.map((d) => <div key={d.asset} className="wk-alert-bad">{d.asset} : {d.message}</div>)}
 
@@ -164,11 +158,11 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
       </Section>
 
       {/* ── Intérêts ── */}
-      <Section title="Intérêts à verser" hint="Intérêts simples (le moteur ne capitalise pas), au taux promis à chaque staker. « Versé par le moteur » = ce que le calcul quotidien crédite réellement aujourd'hui.">
+      <Section title="Intérêts à verser" hint="Intérêts simples (le moteur ne capitalise pas), au taux promis à chaque staker. « Trésorerie interne » = solde du portefeuille interne qui paie les intérêts des actifs autres que WAKATI au moment du retrait : s'il est insuffisant, le retrait n'est pas bloqué mais un manque est enregistré, donc l'argent doit être provisionné.">
         {interestAssets.length === 0 ? <Empty text="Aucun intérêt à verser." /> : (
           <TableWrap>
             <thead>
-              <tr><Th>Actif</Th><Th right>Déjà accumulés</Th>{HORIZONS_VIEW.map((h) => <Th key={h} right hideSm={h === 7 || h === 90}>{h === 1 ? "Par jour" : h === 365 ? "1 an" : `${h} jours`}</Th>)}<Th right hideSm>Versé par le moteur / jour</Th></tr>
+              <tr><Th>Actif</Th><Th right>Déjà accumulés</Th>{HORIZONS_VIEW.map((h) => <Th key={h} right hideSm={h === 7 || h === 90}>{h === 1 ? "Par jour" : h === 365 ? "1 an" : `${h} jours`}</Th>)}<Th right hideSm>Crédité par jour (moteur)</Th><Th>Trésorerie interne</Th></tr>
             </thead>
             <tbody>
               {interestAssets.map((d) => (
@@ -176,20 +170,25 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
                   <Td label="Actif"><b>{d.asset}</b></Td>
                   <Td right label="Déjà accumulés"><Amount v={d.pending} asset={d.asset} price={d.priceUsd} /></Td>
                   {HORIZONS_VIEW.map((h) => <Td key={h} right hideSm={h === 7 || h === 90} label={h === 1 ? "Par jour" : h === 365 ? "1 an" : `${h} jours`}><Amount v={interestOver(d.dailyPromised, h)} asset={d.asset} price={d.priceUsd} /></Td>)}
-                  <Td right hideSm label="Versé par le moteur / jour">{d.dailyEngine > 0 ? <Amount v={d.dailyEngine} asset={d.asset} price={d.priceUsd} /> : <span className="wk-bad">0 — rien n'est crédité</span>}</Td>
+                  <Td right hideSm label="Crédité par jour (moteur)">{d.dailyEngine > 0 ? <Amount v={d.dailyEngine} asset={d.asset} price={d.priceUsd} /> : <span className="wk-bad">0 — rien n'est crédité</span>}</Td>
+                  <Td label="Trésorerie interne">{d.kind === "internal" ? <span className="wk-asset-sub">émission (budget)</span> : (() => {
+                    const bal = treasury.get(d.asset) ?? 0; const need = d.pending + d.interestHorizon;
+                    return bal >= need ? <Pill tone="ok">couverte</Pill> : <Pill tone={bal > 0 ? "warn" : "bad"}>{bal > 0 ? "insuffisante" : "vide"}</Pill>;
+                  })()}{d.kind !== "internal" && <div className="wk-asset-sub">{n4(treasury.get(d.asset) ?? 0)} dispo. / besoin {n4(d.pending + d.interestHorizon)} ({horizon} j)</div>}</Td>
                 </tr>
               ))}
               <tr>
                 <Td label="Actif"><b>Total en dollars</b></Td>
                 <Td right label="Déjà accumulés"><b>{formatUsd(totals.pendingUsd)}</b></Td>
                 {HORIZONS_VIEW.map((h) => <Td key={h} right hideSm={h === 7 || h === 90} label={`${h} j`}><b>{formatUsd(totals.dailyUsd * h)}</b></Td>)}
-                <Td right hideSm label="Versé par le moteur / jour"><b>{formatUsd(decisions.reduce((s, d) => s + (d.priceUsd && d.priceUsd > 0 ? d.dailyEngine * d.priceUsd : 0), 0))}</b></Td>
+                <Td right hideSm label="Crédité par jour (moteur)"><b>{formatUsd(decisions.reduce((s, d) => s + (d.priceUsd && d.priceUsd > 0 ? d.dailyEngine * d.priceUsd : 0), 0))}</b></Td>
+                <Td label="Trésorerie interne">{""}</Td>
               </tr>
             </tbody>
           </TableWrap>
         )}
         <div className="wk-asset-sub" style={{ marginTop: 8 }}>
-          Moteur : taux de {formatNumber(data.engine.apr, 2)} % par an appliqué au plan WAKATI, chaque jour à {cron?.schedule ?? "—"} (dernier passage {cron?.lastRun ? formatDateTime(new Date(cron.lastRun)) : "—"}). Les intérêts WAKATI sont créés par l'émission (budget limité) : ils ne demandent pas de fonds on-chain tant que personne ne retire en WAKATI.
+          Calcul automatique : chaque jour à {cron?.schedule ?? "—"} (UTC), chaque stake actif de chaque plan, y compris les plans et actifs ajoutés plus tard, reçoit montant × taux / 365 (dernier passage {cron?.lastRun ? formatDateTime(new Date(cron.lastRun)) : "—"}). Plan flexible : taux courant du plan. Plan bloqué : taux du stake. Un plan désactivé continue de payer ses stakers existants. Un seul calcul par jour : un second appel ne crédite rien. Les intérêts WAKATI sont créés par l'émission (budget limité) ; les autres actifs sont payés par la trésorerie interne au retrait.
         </div>
       </Section>
 

@@ -71,6 +71,9 @@ async function apply(opts: {
   redirect(`${to}?saved=${encodeURIComponent(opts.summary)}`);
 }
 
+/** Plan WAKATI d'origine, seul lié à la table historique staking_config. */
+const LEGACY_STAKING_POOL_ID = "f6c208e1-f277-4720-b303-45c1b607bf1f";
+
 export async function updateStakingPool(formData: FormData) {
   const id = str(formData, "id");
   const label = str(formData, "label") || id;
@@ -108,10 +111,11 @@ export async function updateStakingPool(formData: FormData) {
         .update({ ...patch, updated_at: new Date().toISOString() })
         .eq("id", id);
 
-      // staking_config est une table historique encore lue par get_my_staking() (affichage
-      // de l'ancien écran simple) : on la garde alignée pour le plan flexible d'origine.
-      // Le calcul réel des récompenses (fn_stake/fn_unstake) lit directement staking_pools.
-      if (!error && stakingType === "flexible") {
+      // staking_config est une table historique encore lue par get_my_staking() (affichage de l'ancien écran
+      // simple) : on la garde alignée UNIQUEMENT pour le plan WAKATI d'origine. Avant, n'importe quel plan flexible
+      // écrasait ce réglage, ce qui aurait faussé l'ancien écran dès qu'un second plan flexible existe.
+      // Le calcul quotidien des intérêts (distribute_staking_rewards) lit staking_pools.base_apy de chaque plan.
+      if (!error && stakingType === "flexible" && id === LEGACY_STAKING_POOL_ID) {
         await db
           .from("staking_config")
           .update({ apr, is_active: isActive, updated_at: new Date().toISOString(), updated_by: getCurrentActor() })

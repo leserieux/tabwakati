@@ -165,7 +165,7 @@ export default async function StakingPage({ searchParams }: { searchParams: Sett
                 ]}
               />
               <Field label="Durée (jours)" name="lock_period_days" step="1" defaultValue={sp.lock_period_days} hint="Ignoré si le type est Flexible." />
-              <Field label="APR (%)" name="base_apy" defaultValue={sp.base_apy} hint="Récompense/jour = montant × apr / 100 / 365." />
+              <Field label="APR (%)" name="base_apy" defaultValue={sp.base_apy} hint="Récompense/jour = montant × apr / 100 / 365, créditée chaque jour pour TOUS les plans. Plan bloqué : le taux est celui du stake (pris à l'ouverture ou au dernier ajout)." />
               <Field label="Dépôt min" name="min_stake" defaultValue={sp.min_stake} />
               <Field label="Dépôt max (par utilisateur)" name="max_stake" defaultValue={sp.max_stake ?? ""} hint="Vide = illimité." />
               <Field label="Capacité totale du plan" name="max_pool_capacity" defaultValue={sp.max_pool_capacity ?? ""} hint="Vide = illimité. Tous utilisateurs confondus." />
