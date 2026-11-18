@@ -34,6 +34,7 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/wakati/staking", label: "Staking" },
     { href: "/dashboard/games", label: "Jeux" },
     { href: "/dashboard/futures", label: "Futures" },
+    { href: "/dashboard/p2p", label: "P2P" },
     { href: "/dashboard/pnl/roue", label: "Roue" },
     { href: "/dashboard/markets", label: "Marchés" }
   ] },
@@ -50,6 +51,8 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/tasks", label: "Tâches" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
     { href: "/dashboard/app", label: "App mobile" },
+    { href: "/dashboard/notifications", label: "Notifications" },
+    { href: "/dashboard/telegram", label: "Bot Telegram" },
     { href: "/dashboard/settings", label: "Paramètres" }
   ] }
 ];

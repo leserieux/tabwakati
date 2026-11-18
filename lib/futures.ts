@@ -35,7 +35,8 @@ export interface FuturesConfigRow {
 }
 
 export interface FuturesPeriod {
-  trades: number; traders: number; wins: number; liquidations: number; tp: number; sl: number; manual: number;
+  trades: number; /** tranches de clôture partielle (non comptées dans trades) */ partials: number;
+  traders: number; wins: number; liquidations: number; tp: number; sl: number; manual: number;
   volume: number; fees_open: number; fees_funding: number; fees_close: number;
   trader_net: number; house_result: number; margin_lost_liq: number;
 }
@@ -101,7 +102,7 @@ const n = (v: unknown): number => { const x = Number(v); return Number.isFinite(
 
 function period(p: any): FuturesPeriod {
   return {
-    trades: n(p?.trades), traders: n(p?.traders), wins: n(p?.wins), liquidations: n(p?.liquidations),
+    trades: n(p?.trades), partials: n(p?.partials), traders: n(p?.traders), wins: n(p?.wins), liquidations: n(p?.liquidations),
     tp: n(p?.tp), sl: n(p?.sl), manual: n(p?.manual), volume: n(p?.volume),
     fees_open: n(p?.fees_open), fees_funding: n(p?.fees_funding), fees_close: n(p?.fees_close),
     trader_net: n(p?.trader_net), house_result: n(p?.house_result), margin_lost_liq: n(p?.margin_lost_liq)
@@ -146,6 +147,37 @@ export async function loadFuturesOverview(): Promise<{ data: FuturesOverview | n
     };
   } catch (e: any) {
     return { data: null, error: e?.message || "Erreur inconnue" };
+  }
+}
+
+/** Un marché futures (table futures_markets) avec son exposition ouverte et son activité récente. */
+export interface FuturesMarketRow {
+  asset_symbol: string; display_symbol: string; asset_name: string; is_active: boolean;
+  leverage_max: number; maintenance_margin_pct: number; sort_order: number;
+  price: number | null; price_age_s: number | null;
+  positions: number; traders: number; margin: number; long_notional: number; short_notional: number;
+  unrealized_pnl: number; worst_liq_distance_pct: number | null;
+  trades_7d: number; volume_7d: number; house_7d: number; liquidations_7d: number;
+  trades_30d: number; volume_30d: number; house_30d: number; liquidations_30d: number;
+}
+
+/** Marchés futures (BTC, BNB, POL…) : réglages par actif + exposition. Fonction SQL admin_futures_markets (migration 20261117). */
+export async function loadFuturesMarkets(): Promise<{ rows: FuturesMarketRow[]; error?: string }> {
+  try {
+    const { data, error } = await getSupabaseAdmin().rpc("admin_futures_markets");
+    if (error) return { rows: [], error: error.message };
+    const rows = (Array.isArray(data) ? data : []).map((m: any): FuturesMarketRow => ({
+      asset_symbol: String(m.asset_symbol), display_symbol: String(m.display_symbol ?? m.asset_symbol), asset_name: String(m.asset_name ?? m.asset_symbol),
+      is_active: !!m.is_active, leverage_max: n(m.leverage_max), maintenance_margin_pct: n(m.maintenance_margin_pct), sort_order: n(m.sort_order),
+      price: m.price == null ? null : n(m.price), price_age_s: m.price_age_s == null ? null : n(m.price_age_s),
+      positions: n(m.positions), traders: n(m.traders), margin: n(m.margin), long_notional: n(m.long_notional), short_notional: n(m.short_notional),
+      unrealized_pnl: n(m.unrealized_pnl), worst_liq_distance_pct: m.worst_liq_distance_pct == null ? null : n(m.worst_liq_distance_pct),
+      trades_7d: n(m.trades_7d), volume_7d: n(m.volume_7d), house_7d: n(m.house_7d), liquidations_7d: n(m.liquidations_7d),
+      trades_30d: n(m.trades_30d), volume_30d: n(m.volume_30d), house_30d: n(m.house_30d), liquidations_30d: n(m.liquidations_30d)
+    }));
+    return { rows };
+  } catch (e: any) {
+    return { rows: [], error: e?.message || "Erreur inconnue" };
   }
 }
 
@@ -315,7 +347,7 @@ export async function loadMoneyDaily(days = 14): Promise<{ rows: MoneyDay[]; err
 }
 
 /** Alertes de santé du moteur (page Futures + « À traiter » de l'accueil). Ne lève jamais. */
-export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | null): FuturesAlert[] {
+export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | null, markets: FuturesMarketRow[] = []): FuturesAlert[] {
   const out: FuturesAlert[] = [];
   if (!health) { out.push({ tone: "warn", text: "Santé du moteur futures illisible (migration 20261108_futures_admin.sql appliquée ?)." }); return out; }
   const open = ov?.open.positions ?? 0;
@@ -330,6 +362,12 @@ export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | 
 
   if (open > 0 && health.stale_open_positions > 0) out.push({ tone: "warn", text: `${health.stale_open_positions} position(s) ouverte(s) non contrôlée(s) depuis plus de 60 s.` });
   if (Math.abs(health.ledger_diff) > 0.01) out.push({ tone: "bad", text: `Écart de rapprochement : le ledger des transactions et les positions diffèrent de ${health.ledger_diff.toLocaleString("fr-FR", { maximumFractionDigits: 4 })}.` });
+
+  for (const m of markets) {
+    if (!m.is_active) continue;
+    if (m.price === null) out.push({ tone: m.positions > 0 ? "bad" : "warn", text: `Marché ${m.display_symbol} : aucun prix disponible, ouvertures et fermetures refusées sur cet actif.` });
+    if (m.positions > 0 && m.worst_liq_distance_pct !== null && m.worst_liq_distance_pct < 3) out.push({ tone: "info", text: `Marché ${m.display_symbol} : une position est à ${m.worst_liq_distance_pct.toFixed(2)} % de la liquidation.` });
+  }
 
   if (ov) {
     const c = ov.config;
@@ -348,9 +386,9 @@ export function buildAlerts(ov: FuturesOverview | null, health: FuturesHealth | 
 /** Lignes « À traiter » de l'accueil : seulement ce qui demande une action (bad / warn). */
 export async function futuresTodos(): Promise<{ tone: "ok" | "warn" | "bad" | "info"; text: string; href: string }[]> {
   try {
-    const [ov, health] = await Promise.all([loadFuturesOverview(), loadFuturesHealth()]);
+    const [ov, health, mk] = await Promise.all([loadFuturesOverview(), loadFuturesHealth(), loadFuturesMarkets()]);
     if (!ov.data && !health.data) return [];
-    return buildAlerts(ov.data, health.data)
+    return buildAlerts(ov.data, health.data, mk.rows)
       .filter((a) => a.tone === "bad" || a.tone === "warn")
       .map((a) => ({ tone: a.tone, text: `Futures : ${a.text}`, href: "/dashboard/futures" }));
   } catch {
