@@ -108,6 +108,12 @@ export default async function UserDetailPage({ params, searchParams }: { params:
   }
 
   const user = userRes.data[0] as User;
+  const [profileChanges, telegramLink] = await Promise.all([
+    q<any>(getSupabaseAdmin().from("profile_changes").select("id, field, old_value, new_value, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20)),
+    q<any>(getSupabaseAdmin().from("telegram_links").select("telegram_username, telegram_first_name, linked_via, lang, created_at").eq("user_id", user.id).limit(1))
+  ]);
+  const tg = telegramLink.rows[0] ?? null;
+  const FIELD_LABELS: Record<string, string> = { username: "Nom d'utilisateur", first_name: "Prénom", last_name: "Nom", phone: "Téléphone", avatar_url: "Photo de profil", display_currency: "Devise d'affichage" };
   const byAsset = new Map<string, Balance>();
   for (const row of balances.rows) {
     const asset = String(row.asset_symbol);
@@ -193,6 +199,7 @@ export default async function UserDetailPage({ params, searchParams }: { params:
             <p><strong>Points :</strong> {formatCompactNumber(Number(user.experience_points || 0))}</p>
             <p><strong>Créé le :</strong> {user.created_at ? formatDateTime(new Date(user.created_at)) : "—"}</p>
             <p><strong>Dernière activité :</strong> {user.updated_at ? formatDateTime(new Date(user.updated_at)) : "—"}</p>
+            <p><strong>Telegram :</strong> {tg ? `${tg.telegram_username ? "@" + tg.telegram_username : tg.telegram_first_name ?? "lié"} (depuis le ${formatDateTime(new Date(tg.created_at))})` : "non lié"}</p>
           </div>
 
           <div className="wk-panel">
@@ -208,6 +215,24 @@ export default async function UserDetailPage({ params, searchParams }: { params:
           </div>
         </div>
       </Section>
+
+      {profileChanges.rows.length > 0 && (
+        <Section title="Historique du profil" hint="Les 20 dernières modifications (nom d'utilisateur, nom, téléphone, photo…).">
+          <TableWrap>
+            <thead><tr><Th>Date</Th><Th>Champ</Th><Th>Avant</Th><Th>Après</Th></tr></thead>
+            <tbody>
+              {profileChanges.rows.map((c: any) => (
+                <tr key={c.id}>
+                  <Td label="Date">{formatDateTime(new Date(c.created_at))}</Td>
+                  <Td label="Champ">{FIELD_LABELS[c.field] ?? c.field}</Td>
+                  <Td label="Avant"><span style={{ wordBreak: "break-all" }}>{c.old_value || "—"}</span></Td>
+                  <Td label="Après"><span style={{ wordBreak: "break-all" }}>{c.new_value || "—"}</span></Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </Section>
+      )}
 
       <Section title="Résumé comportemental" hint="Synthèse de décision sur 7 / 30 / 90 jours.">
         <div className="wk-grid-3">
@@ -340,7 +365,7 @@ export default async function UserDetailPage({ params, searchParams }: { params:
                   <Td label="Sens"><Pill tone={r.side === "LONG" ? "ok" : "bad"}>{r.side === "LONG" ? "Long" : "Short"} {r.leverage}x</Pill></Td>
                   <Td right label="Marge">{formatToken(r.margin)}</Td>
                   <Td right hideSm label="Entrée → Sortie">{formatToken(r.entry_price)} → {r.exit_price === null ? "—" : formatToken(r.exit_price)}</Td>
-                  <Td label="Statut">{r.status === "open" ? <Pill tone="info">Ouverte</Pill> : r.close_reason === "liquidation" ? <Pill tone="bad">Liquidée</Pill> : r.close_reason === "tp" ? <Pill tone="ok">Take Profit</Pill> : r.close_reason === "sl" ? <Pill tone="warn">Stop Loss</Pill> : <Pill tone="info">Fermée</Pill>}</Td>
+                  <Td label="Statut">{r.status === "open" ? <Pill tone="info">Ouverte</Pill> : r.close_reason === "liquidation" ? <Pill tone="bad">Liquidée</Pill> : r.close_reason === "partial" ? <Pill tone="info">Clôture partielle</Pill> : r.close_reason === "tp" ? <Pill tone="ok">Take Profit</Pill> : r.close_reason === "sl" ? <Pill tone="warn">Stop Loss</Pill> : <Pill tone="info">Fermée</Pill>}</Td>
                   <Td right label="Résultat net">{r.realized_pnl === null ? "—" : `${r.realized_pnl > 0 ? "+" : ""}${formatToken(r.realized_pnl)}`}</Td>
                   <Td hideSm label="Ouverte">{formatDateTime(new Date(r.opened_at))}</Td>
                 </tr>

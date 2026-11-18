@@ -5,10 +5,10 @@ import { Field, TextField, Toggle, SettingsCard, SettingsMessages } from "@/comp
 import { ConfirmDeleteButton } from "@/app/dashboard/settings/ConfirmDeleteButton";
 import MoneyHero, { sg } from "./money-hero";
 import {
-  loadFuturesOverview, loadFuturesHealth, loadOpenPositions, loadRecentClosed, loadMoneyDaily, loadFuturesMoney, loadTraders, loadByLeverage, buildAlerts,
+  loadFuturesOverview, loadFuturesHealth, loadFuturesMarkets, loadOpenPositions, loadRecentClosed, loadMoneyDaily, loadFuturesMoney, loadTraders, loadByLeverage, buildAlerts,
   type FuturesPeriod
 } from "@/lib/futures";
-import { updateFuturesConfig, setFuturesActive, forceClosePosition, forceCloseAll } from "./actions";
+import { updateFuturesConfig, updateFuturesMarket, setFuturesActive, forceClosePosition, forceCloseAll } from "./actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,8 +33,8 @@ const feesOf = (p: FuturesPeriod) => p.fees_open + p.fees_funding + p.fees_close
 const distTone = (d: number | null): Tone => (d === null ? "info" : d < 3 ? "bad" : d < 8 ? "warn" : "ok");
 
 export default async function FuturesPage({ searchParams }: { searchParams: SettingsParams }) {
-  const [ovRes, healthRes, openRes, closedRes, dailyRes, tradersRes, levRes, moneyRes, prices] = await Promise.all([
-    loadFuturesOverview(), loadFuturesHealth(), loadOpenPositions(), loadRecentClosed(25), loadMoneyDaily(14), loadTraders(15), loadByLeverage(), loadFuturesMoney(), loadPrices()
+  const [ovRes, healthRes, marketsRes, openRes, closedRes, dailyRes, tradersRes, levRes, moneyRes, prices] = await Promise.all([
+    loadFuturesOverview(), loadFuturesHealth(), loadFuturesMarkets(), loadOpenPositions(), loadRecentClosed(25), loadMoneyDaily(14), loadTraders(15), loadByLeverage(), loadFuturesMoney(), loadPrices()
   ]);
 
   const ov = ovRes.data;
@@ -42,8 +42,9 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
   const cur = cfg?.currency_symbol ?? "WAKATI";
   const usdPrice = prices.get(cur) ?? null;
   const usd = (v: number) => (usdPrice ? `≈ ${formatUsd(v * usdPrice)}` : "");
-  const alerts = buildAlerts(ov, healthRes.data);
-  const errors = [ovRes.error, healthRes.error, openRes.error, closedRes.error, dailyRes.error, tradersRes.error, levRes.error, moneyRes.error].filter(Boolean).join(" · ");
+  const markets = marketsRes.rows;
+  const alerts = buildAlerts(ov, healthRes.data, markets);
+  const errors = [ovRes.error, healthRes.error, marketsRes.error, openRes.error, closedRes.error, dailyRes.error, tradersRes.error, levRes.error, moneyRes.error].filter(Boolean).join(" · ");
 
   if (!ov || !cfg) {
     return (
@@ -70,7 +71,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
     <div>
       <PageHeader
         title="Futures"
-        subtitle={`Trading à levier sur ${cfg.asset_name} (marge isolée, long / short) : exposition, résultat de la plateforme, santé du moteur, contrôle et réglages. Montants en ${cur}.`}
+        subtitle={`Trading à levier (marge isolée, long / short) sur ${markets.length > 0 ? markets.map((m) => m.display_symbol).join(", ") : cfg.asset_name} : exposition, résultat de la plateforme, santé du moteur, contrôle et réglages. Montants en ${cur}.`}
         updatedAt={formatDateTime(new Date())}
       />
       <SettingsMessages searchParams={searchParams} />
@@ -111,6 +112,46 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
             </div>
           </>
         )}
+      </Section>
+
+      {/* ── Marchés (multi-actifs) ── */}
+      <Section title="Marchés" hint="Un marché = un actif tradable. Exposition ouverte et activité récente par actif ; le résultat plateforme est positif quand la plateforme gagne.">
+        {markets.length === 0 ? <Empty text="Aucun marché configuré (table futures_markets vide ou migration 20261117 non appliquée)." /> : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>Marché</Th><Th right>Prix</Th><Th right>Positions</Th><Th right hideSm>Long / Short</Th><Th right hideSm>PNL latent traders</Th>
+                <Th right>7 j : clôturées</Th><Th right hideSm>7 j : taille</Th><Th right>7 j : résultat plateforme</Th><Th right hideSm>30 j : clôturées</Th><Th right>30 j : résultat plateforme</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {markets.map((m) => {
+                const eff = Math.min(cfg.leverage_max, m.leverage_max);
+                return (
+                  <tr key={m.asset_symbol}>
+                    <Td label="Marché">
+                      <b>{m.display_symbol}</b> <span className="wk-asset-sub">{m.asset_name}</span>{" "}
+                      {m.is_active ? <Pill tone="ok">Actif</Pill> : <Pill tone="warn">Désactivé</Pill>}
+                      <div className="wk-asset-sub">Levier max effectif {eff}x · maintenance {formatNumber(m.maintenance_margin_pct, 2)} %</div>
+                    </Td>
+                    <Td right label="Prix">{m.price === null ? <Pill tone="bad">aucun</Pill> : <>{pxf(m.price)}{m.price_age_s !== null && m.price_age_s > 15 && <div className="wk-asset-sub">{Math.round(m.price_age_s)} s</div>}</>}</Td>
+                    <Td right label="Positions">{m.positions}{m.positions > 0 && <div className="wk-asset-sub">{m.traders} trader(s) · marge {fmt(m.margin)}</div>}</Td>
+                    <Td right hideSm label="Long / Short">{fmt(m.long_notional, 0)} / {fmt(m.short_notional, 0)}</Td>
+                    <Td right hideSm label="PNL latent traders"><span className={tone(m.unrealized_pnl) ? `wk-${tone(-m.unrealized_pnl)}` : ""}>{signed(m.unrealized_pnl)}</span></Td>
+                    <Td right label="7 j : clôturées">{m.trades_7d}{m.liquidations_7d > 0 && <div className="wk-asset-sub">{m.liquidations_7d} liquidation(s)</div>}</Td>
+                    <Td right hideSm label="7 j : taille">{fmt(m.volume_7d, 0)}</Td>
+                    <Td right label="7 j : résultat plateforme"><span className={tone(m.house_7d) ? `wk-${tone(m.house_7d)}` : ""}>{signed(m.house_7d)}</span></Td>
+                    <Td right hideSm label="30 j : clôturées">{m.trades_30d}</Td>
+                    <Td right label="30 j : résultat plateforme"><span className={tone(m.house_30d) ? `wk-${tone(m.house_30d)}` : ""}>{signed(m.house_30d)}</span></Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </TableWrap>
+        )}
+        <div className="wk-asset-sub" style={{ marginTop: 8 }}>
+          « Résultat plateforme » = − PNL réalisé des traders sur les positions clôturées (frais compris), toutes lignes comprises (les tranches de clôture partielle comptent pour leur PNL, pas comme un trade).
+        </div>
       </Section>
 
       {/* ── Positions ouvertes ── */}
@@ -156,7 +197,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
       </Section>
 
       {/* ── Activité par période ── */}
-      <Section title="Activité par période" hint="Positions clôturées.">
+      <Section title="Activité par période" hint="Positions clôturées. Une clôture partielle n'est pas un trade : ses tranches sont comptées à part (leur PNL, leurs frais et leur taille restent dans les totaux).">
         <TableWrap>
           <thead>
             <tr><Th>Période</Th><Th right>Clôturées</Th><Th right>Traders</Th><Th right hideSm>Taille traitée</Th><Th right>Liquidations</Th><Th right hideSm>TP / SL / Manuel</Th><Th right hideSm>Traders gagnants</Th></tr>
@@ -165,7 +206,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
             {periods.map(({ label, p }) => (
               <tr key={label}>
                 <Td label="Période">{label}</Td>
-                <Td right label="Clôturées">{p.trades}</Td>
+                <Td right label="Clôturées">{p.trades}{p.partials > 0 && <div className="wk-asset-sub">+ {p.partials} tranche(s) partielle(s)</div>}</Td>
                 <Td right label="Traders">{p.traders}</Td>
                 <Td right hideSm label="Taille traitée">{fmt(p.volume, 0)}</Td>
                 <Td right label="Liquidations">{p.liquidations} <span className="wk-asset-sub">({fmt(p.margin_lost_liq, 0)} perdus)</span></Td>
@@ -307,25 +348,42 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
 
       {/* ── Réglages ── */}
       <Section title="Réglages du trading futures" hint="Lus par l'app à chaque ouverture. Les frais, la marge de maintenance et l'intervalle sont figés à l'ouverture de chaque position : un changement ne s'applique qu'aux NOUVELLES positions.">
-        <SettingsCard returnTo={RETURN} title="Trading futures" hint={`Actif suivi : ${cfg.asset_name} (${cfg.asset_symbol}). Devise : ${cur}.`} updatedAt={cfg.updated_at ? formatDateTime(new Date(cfg.updated_at)) + (cfg.updated_by ? ` par ${cfg.updated_by}` : "") : null} action={updateFuturesConfig}>
+        <SettingsCard returnTo={RETURN} title="Trading futures" hint={`Réglages communs à tous les marchés (frais, marges, plafonds, positions max). Levier et marge de maintenance se règlent par marché, dans la section suivante. Devise : ${cur}.`} updatedAt={cfg.updated_at ? formatDateTime(new Date(cfg.updated_at)) + (cfg.updated_by ? ` par ${cfg.updated_by}` : "") : null} action={updateFuturesConfig}>
           <Field label={`Marge par défaut (${cur})`} name="margin_default" defaultValue={cfg.margin_default} />
           <Field label="Marge minimale" name="margin_min" defaultValue={cfg.margin_min} />
           <Field label="Marge maximale" name="margin_max" defaultValue={cfg.margin_max} />
           <Field label="Levier par défaut" name="leverage_default" step="1" defaultValue={cfg.leverage_default} />
           <Field label="Levier minimal" name="leverage_min" step="1" defaultValue={cfg.leverage_min} />
-          <Field label="Levier maximal" name="leverage_max" step="1" defaultValue={cfg.leverage_max} hint="Plus il est haut, plus la liquidation est proche du prix d'entrée." />
+          <Field label="Levier maximal" name="leverage_max" step="1" defaultValue={cfg.leverage_max} hint="Plafond global : le levier effectif d'un marché est le plus petit de ce plafond et du levier max du marché." />
           <TextField label="Raccourcis de levier" name="leverage_presets" defaultValue={cfg.leverage_presets.join(", ")} hint="Séparés par des virgules, dans l'intervalle ci-dessus." />
           <Field label="Frais d'ouverture (% de la taille)" name="open_fee_pct" defaultValue={cfg.open_fee_pct} hint="Taille = marge × levier." />
           <Field label="Frais de fermeture (% de la taille)" name="close_fee_pct" defaultValue={cfg.close_fee_pct} />
           <Field label="Frais périodiques (% de la taille)" name="fee_rate_pct" defaultValue={cfg.fee_rate_pct} hint={`Prélevés sur la marge à chaque intervalle.${dailyFeePerDay > 0 ? ` Actuellement ≈ ${formatNumber(dailyFeePerDay, 3)} % de la taille par jour.` : ""}`} />
           <Field label="Intervalle des frais (secondes)" name="fee_interval_seconds" step="1" defaultValue={cfg.fee_interval_seconds} hint="3600 = 1 h, 28800 = 8 h, 86400 = 24 h. 0 = pas de frais périodiques." />
-          <Field label="Marge de maintenance (% de la taille)" name="maintenance_margin_pct" defaultValue={cfg.maintenance_margin_pct} hint="Seuil de liquidation : plus il est haut, plus on est liquidé tôt." />
+          <Field label="Marge de maintenance (% de la taille)" name="maintenance_margin_pct" defaultValue={cfg.maintenance_margin_pct} hint="Ce champ n'est plus lu à l'ouverture : chaque marché a sa propre marge de maintenance (section « Réglages des marchés »)." />
           <Field label="Positions ouvertes max / utilisateur" name="max_open_positions" step="1" defaultValue={cfg.max_open_positions} />
           <Field label="Exposition max par joueur" name="max_notional_per_user" defaultValue={cfg.max_notional_per_user} hint={`Somme des tailles (marge × levier) qu'un joueur peut avoir ouvertes, en ${cur}. 0 = illimité.`} />
           <Field label="Capacité totale de la plateforme" name="max_total_notional" defaultValue={cfg.max_total_notional} hint="Somme des tailles ouvertes tous joueurs confondus. 0 = illimité. Limite le risque de contrepartie." />
           <Toggle label="TP / SL autorisés" name="tp_sl_enabled" defaultChecked={cfg.tp_sl_enabled} />
           <Toggle label="Trading actif (nouvelles positions)" name="is_active" defaultChecked={cfg.is_active} />
         </SettingsCard>
+      </Section>
+
+      <Section title="Réglages des marchés" hint="Un formulaire par actif. Désactiver un marché bloque les NOUVELLES positions sur cet actif : les positions ouvertes restent surveillées, liquidées et fermables. Les positions déjà ouvertes gardent leur marge de maintenance.">
+        {markets.map((m) => (
+          <SettingsCard
+            key={m.asset_symbol}
+            returnTo={RETURN}
+            title={`${m.display_symbol} — ${m.asset_name}`}
+            hint={`Symbole technique : ${m.asset_symbol}. ${m.positions > 0 ? `${m.positions} position(s) ouverte(s) sur ce marché.` : "Aucune position ouverte."} Levier effectif aujourd'hui : ${Math.min(cfg.leverage_max, m.leverage_max)}x (plafond global ${cfg.leverage_max}x).`}
+            action={updateFuturesMarket}
+          >
+            <input type="hidden" name="asset_symbol" value={m.asset_symbol} />
+            <Field label="Levier maximal du marché" name="leverage_max" step="1" defaultValue={m.leverage_max} hint="Entier. 100 / levier doit rester supérieur à la marge de maintenance." />
+            <Field label="Marge de maintenance (% de la taille)" name="maintenance_margin_pct" defaultValue={m.maintenance_margin_pct} hint="Seuil de liquidation de ce marché, utilisé à l'ouverture des nouvelles positions." />
+            <Toggle label="Marché actif (nouvelles positions)" name="is_active" defaultChecked={m.is_active} />
+          </SettingsCard>
+        ))}
       </Section>
     </div>
   );

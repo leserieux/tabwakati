@@ -179,3 +179,49 @@ export async function forceCloseAll(formData: FormData) {
   if (!ok) done("error", "Fermeture de toutes les positions", error?.message || `${res?.closed ?? 0} fermée(s), ${failed} échec(s) : ${res?.error ?? "prix en retard ou position déjà traitée"}.`);
   done("saved", `${res?.closed ?? 0} position(s) fermée(s)`);
 }
+
+/**
+ * Réglages d'un marché (table futures_markets : BTC, BNB, POL…).
+ * Levier effectif à l'ouverture = le plus petit du levier max global (futures_config) et du levier max du marché ;
+ * la marge de maintenance utilisée à l'ouverture est celle du marché. Les positions déjà ouvertes gardent leurs valeurs.
+ */
+export async function updateFuturesMarket(formData: FormData) {
+  const asset = str(formData, "asset_symbol");
+  const patch = {
+    is_active: bool(formData, "is_active"),
+    leverage_max: num(formData, "leverage_max"),
+    maintenance_margin_pct: num(formData, "maintenance_margin_pct")
+  };
+  const target = `futures_markets#${asset}`;
+
+  const db = getSupabaseAdmin();
+  const { data: before } = await db.from("futures_markets").select("*").eq("asset_symbol", asset).maybeSingle();
+  if (!before) done("error", "Marché futures", `Marché inconnu : ${asset || "(vide)"}.`);
+
+  const errors: string[] = [];
+  if (!Number.isInteger(patch.leverage_max) || patch.leverage_max < 1) errors.push("Le levier maximal doit être un entier d'au moins 1.");
+  else if (patch.leverage_max > 125) errors.push("Levier maximal limité à 125x.");
+  if (!Number.isFinite(patch.maintenance_margin_pct) || patch.maintenance_margin_pct < 0.05 || patch.maintenance_margin_pct > 20) errors.push("La marge de maintenance doit être comprise entre 0,05 % et 20 %.");
+  if (!errors.length) {
+    const dist = 100 / patch.leverage_max - patch.maintenance_margin_pct;
+    if (dist <= 0) errors.push(`Avec ${patch.leverage_max}x, 100 / levier (${(100 / patch.leverage_max).toFixed(2)} %) doit rester supérieur à la marge de maintenance (${patch.maintenance_margin_pct} %) : sinon aucune position ne peut s'ouvrir.`);
+    else if (dist < 0.2) errors.push(`Avec ${patch.leverage_max}x, la liquidation se déclencherait à moins de 0,2 % du prix d'entrée : baissez le levier maximal ou la marge de maintenance.`);
+  }
+
+  const changes = diffFields(before, patch);
+  if (errors.length) {
+    await logAdminAction({ action: "futures.market.update", summary: `Marché ${asset} : réglages refusés`, target, changes, status: "error", errorMessage: errors.join(" | ") });
+    done("error", `Marché ${asset}`, errors.join(" "));
+  }
+  if (changes.length === 0) done("saved", `Marché ${asset} (aucun changement)`);
+
+  const { error } = await db.from("futures_markets").update(patch).eq("asset_symbol", asset);
+  const switched = changes.find((c) => c.field === "is_active");
+  await logAdminAction({
+    action: switched ? (patch.is_active ? "futures.market.enable" : "futures.market.disable") : "futures.market.update",
+    summary: switched ? `Marché ${asset} ${patch.is_active ? "activé" : "désactivé"}` : `Marché ${asset} : réglages`,
+    target, changes, status: error ? "error" : "success", errorMessage: error?.message
+  });
+  if (error) done("error", `Marché ${asset}`, error.message);
+  done("saved", `Marché ${asset}`);
+}
