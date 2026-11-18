@@ -32,6 +32,7 @@ export const NAV: NavEntry[] = [
   { key: "products", label: "Produits", icon: "percent", href: "/dashboard/credit", tabs: [
     { href: "/dashboard/credit", label: "Prêts" },
     { href: "/dashboard/wakati/staking", label: "Staking" },
+    { href: "/dashboard/staking-plan", label: "Plan staking" },
     { href: "/dashboard/games", label: "Jeux" },
     { href: "/dashboard/futures", label: "Futures" },
     { href: "/dashboard/p2p", label: "P2P" },

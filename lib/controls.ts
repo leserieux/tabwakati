@@ -57,6 +57,25 @@ async function extraControls(): Promise<Control[]> {
       });
     }
   } catch { /* idem */ }
+  try {
+    const { data, error } = await db.rpc("admin_staking_plan");
+    if (!error && data) {
+      const pools: any[] = (data as any).pools ?? [];
+      const unpaid = pools.filter((p) => p.is_active && Number(p.base_apy) > 0 && !p.engine_pays);
+      const withStakers = unpaid.filter((p) => Number(p.staked) > 0);
+      const names = (l: any[]) => l.map((p) => `${p.name} (${p.asset_symbol} ${Number(p.base_apy)} %)`).join(", ");
+      out.push({
+        check_key: "staking_interest_engine", category: "Opérations", label: "Intérêts de staking réellement crédités",
+        status: withStakers.length ? "bad" : unpaid.length ? "warn" : "ok",
+        value: unpaid.length ? `${unpaid.length} plan(s) sans intérêts` : "tous les plans actifs",
+        detail: withStakers.length
+          ? `Des utilisateurs sont stakés sur des plans qui affichent un taux mais n'accumulent aucun intérêt : ${names(withStakers)}. Le calcul quotidien ne crédite que le plan WAKATI.`
+          : unpaid.length
+            ? `Plans actifs sans intérêts crédités (personne n'y est staké pour l'instant) : ${names(unpaid)}.`
+            : "Chaque plan actif qui affiche un taux est couvert par le calcul quotidien d'intérêts."
+      });
+    }
+  } catch { /* idem */ }
   return out;
 }
 
