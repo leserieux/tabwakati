@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Wakati">
+
+  <!-- Google Sign-In (requis par google_sign_in_web) -->
+  <meta name="google-signin-client_id" content="110742450585-7tfea1ckss9r9ijtiq78415gdb5dudu4.apps.googleusercontent.com">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Wakati">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png"/>
+  <meta name="theme-color" content="#0E0A12">
+
+  <title>Wakati</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0E0A12; }
+    #splash { position: fixed; inset: 0; display: flex; align-items: center;
+              justify-content: center; background: #0E0A12; z-index: 10; }
+    #splash img { width: 88px; height: 88px; border-radius: 22px; }
+  </style>
+</head>
+<body>
+  <!-- Écran de démarrage Wakati (remplace l'écran blanc pendant le chargement) -->
+  <div id="splash"><img src="icons/Icon-192.png" alt="Wakati"></div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var s = document.getElementById('splash');
+      if (s) s.remove();
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
