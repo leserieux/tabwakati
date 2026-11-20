@@ -6,37 +6,47 @@ export interface Tab { href: string; label: string }
 export interface NavEntry { key: string; label: string; icon: IconName; href: string; tabs?: Tab[] }
 
 /**
- * Navigation par question que se pose l'admin : 6 entrées.
- * Les sous-pages d'un même sujet sont des onglets (SectionTabs). Les URLs des pages n'ont pas changé :
- * seul leur rattachement à une entrée a changé (ex. /dashboard/pnl/acquisition est maintenant sous « Utilisateurs »).
+ * Navigation par tâche de l'admin (restructuration du 2026-11-20, voir docs/ROADMAP_RESTRUCTURATION.md) : 8 entrées.
+ *  - Accueil     : ce qui demande une action maintenant.
+ *  - Trésorerie  : tout ce qui concerne l'argent détenu, actif par actif (vue par actif, couverture, retraits, collecte, liquidité, staking).
+ *  - Opérations  : la file d'attente (transactions bloquées/échouées, prêts à surveiller…), les transactions et les tâches.
+ *  - Utilisateurs, Revenus, Produits, WAKATI, Système.
+ * Les URLs existantes n'ont pas changé : seul leur rattachement à une entrée a changé. Un seul mot par concept (voir le glossaire de la roadmap).
  */
 export const NAV: NavEntry[] = [
-  { key: "today", label: "Aujourd'hui", icon: "grid", href: "/dashboard" },
-  { key: "money", label: "Argent", icon: "shield", href: "/dashboard/treasury", tabs: [
-    { href: "/dashboard/treasury", label: "Solvabilité" },
+  { key: "today", label: "Accueil", icon: "grid", href: "/dashboard" },
+  { key: "money", label: "Trésorerie", icon: "shield", href: "/dashboard/assets", tabs: [
+    { href: "/dashboard/assets", label: "Actifs" },
+    { href: "/dashboard/treasury", label: "Couverture" },
     { href: "/dashboard/custody", label: "Réserve de retrait" },
-    { href: "/dashboard/pnl", label: "Résultat" },
-    { href: "/dashboard/pnl/depots", label: "Dépôts" },
-    { href: "/dashboard/liquidity", label: "Liquidité (swap)" },
-    { href: "/dashboard/sweep", label: "Balayage" },
-    { href: "/dashboard/fees", label: "Frais" }
+    { href: "/dashboard/sweep", label: "Collecte des dépôts" },
+    { href: "/dashboard/liquidity", label: "Liquidité des échanges" },
+    { href: "/dashboard/staking-plan", label: "Plan staking" }
+  ] },
+  { key: "ops", label: "Opérations", icon: "clock", href: "/dashboard/operations", tabs: [
+    { href: "/dashboard/operations", label: "File d'attente" },
+    { href: "/dashboard/transactions", label: "Transactions" },
+    { href: "/dashboard/tasks", label: "Tâches" }
   ] },
   { key: "users", label: "Utilisateurs", icon: "users", href: "/dashboard/users", tabs: [
     { href: "/dashboard/users", label: "Liste" },
-    { href: "/dashboard/transactions", label: "Transactions" },
-    { href: "/dashboard/pnl/utilisateurs", label: "Rentabilité" },
+    { href: "/dashboard/analytics", label: "Croissance" },
+    { href: "/dashboard/analytics/cohortes", label: "Rétention & valeur" },
     { href: "/dashboard/pnl/acquisition", label: "Acquisition" },
-    { href: "/dashboard/analytics/cohortes", label: "Cohortes & LTV" },
-    { href: "/dashboard/analytics", label: "Analytics" }
+    { href: "/dashboard/pnl/utilisateurs", label: "Rentabilité" }
   ] },
-  { key: "products", label: "Produits", icon: "percent", href: "/dashboard/credit", tabs: [
+  { key: "revenue", label: "Revenus", icon: "price", href: "/dashboard/pnl", tabs: [
+    { href: "/dashboard/pnl", label: "Résultat" },
+    { href: "/dashboard/fees", label: "Frais" },
+    { href: "/dashboard/pnl/depots", label: "Dépôts" }
+  ] },
+  { key: "products", label: "Produits", icon: "layers", href: "/dashboard/credit", tabs: [
     { href: "/dashboard/credit", label: "Prêts" },
     { href: "/dashboard/wakati/staking", label: "Staking" },
-    { href: "/dashboard/staking-plan", label: "Plan staking" },
-    { href: "/dashboard/games", label: "Jeux" },
     { href: "/dashboard/futures", label: "Futures" },
-    { href: "/dashboard/p2p", label: "P2P" },
+    { href: "/dashboard/games", label: "Jeux" },
     { href: "/dashboard/pnl/roue", label: "Roue" },
+    { href: "/dashboard/p2p", label: "P2P" },
     { href: "/dashboard/markets", label: "Marchés" }
   ] },
   { key: "wakati", label: "WAKATI", icon: "coin", href: "/dashboard/wakati", tabs: [
@@ -49,11 +59,10 @@ export const NAV: NavEntry[] = [
   ] },
   { key: "system", label: "Système", icon: "gear", href: "/dashboard/controls", tabs: [
     { href: "/dashboard/controls", label: "Contrôles" },
-    { href: "/dashboard/tasks", label: "Tâches" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
-    { href: "/dashboard/app", label: "App mobile" },
     { href: "/dashboard/notifications", label: "Notifications" },
     { href: "/dashboard/telegram", label: "Bot Telegram" },
+    { href: "/dashboard/app", label: "App mobile" },
     { href: "/dashboard/settings", label: "Paramètres" }
   ] }
 ];
