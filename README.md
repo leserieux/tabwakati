@@ -20,6 +20,7 @@ Les écrans génériques d'administration traitent **tous les actifs de la même
 - [x] Phase 3B — Page analytics visible, alimentée uniquement par les tables réelles : `users`, `user_balances`, `transactions`, `asset_prices`, `platform_fees`, `user_risk_score_history`.
 - [x] Phase 3C — Cohortes, rétention, churn, valeur vie (LTV) et monétisation : page `/dashboard/analytics/cohortes` (onglet Marchés & analytics > Cohortes & LTV), logique dans `lib/cohorts.ts` et fonctions SQL `admin_*`.
 - [x] Phase 4 — Coût historique d'acquisition et P&L réel : valorisation au prix du jour (`lib/pnl.ts`) et page `/dashboard/pnl/acquisition` (`lib/acquisition.ts`).
+- [ ] **Restructuration du dashboard** (voir `docs/ROADMAP_RESTRUCTURATION.md`) : phase 0 faite (navigation par tâche, Actifs, File d'attente, nouvel accueil) ; phases 1 à 7 à faire (vocabulaire, trésorerie consolidée, recherche globale, pages produits, confiance des chiffres, rôles, tendances).
 
 ## Règles d'implémentation
 
@@ -30,6 +31,8 @@ Les écrans génériques d'administration traitent **tous les actifs de la même
 - La variation nette et la performance comptable ne sont jamais présentées comme un P&L réel.
 
 ## Journal
+
+- 2026-11-20 — **Restructuration du dashboard, phase 0** (roadmap : `docs/ROADMAP_RESTRUCTURATION.md`). Navigation par tâche en 8 entrées (`lib/nav-config.ts` : Accueil, Trésorerie, Opérations, Utilisateurs, Revenus, Produits, WAKATI, Système ; URLs inchangées, un mot par concept : « balayage » devient « Collecte des dépôts », « Solvabilité » devient « Couverture »). Nouvelles pages : **Actifs** (`/dashboard/assets`, une ligne par actif, mêmes calculs que Couverture via `lib/solvency`), **fiche actif** (`/dashboard/assets/[symbol]` : dû / détenu / écart, où se trouve l'argent, staking de l'actif, derniers mouvements), **File d'attente** (`/dashboard/operations` : transactions bloquées ou échouées avec les lignes réelles, prêts à surveiller, collectes en échec, dépôts suspendus). **Accueil refait** : état de la plateforme, 8 chiffres clés cliquables, actions triées par gravité puis par montant en jeu, actifs à surveiller ; le bloc « Aller à » est supprimé. Aucune migration SQL. Présentation partagée dans `lib/asset-view.ts`.
 
 - 2026-11-18 (c) — **Feuille de style de base restaurée** (`app/globals.css`). Le zip du commit `4eb97a0` n'avait plus que la section « Vue d'ensemble business » : tout le design de base (variables de couleur `--ink`/`--surface`…, barre latérale, tableaux, cartes, pastilles, formulaires, jauges, version mobile) avait disparu lors de l'« incident de fichier vide », d'où un site sans mise en forme. Reconstitué à partir du CSS compilé du déploiement Vercel du 10 nov. (avant l'incident), reformaté, placé avant la section existante (conservée telle quelle). Ajout de 4 classes jamais définies : `wk-btn-primary`, `wk-callout-info`, `wk-field`, `wk-grid-3`. À retenir : ne jamais remplacer `globals.css` par un fichier partiel.
 
