@@ -17,6 +17,7 @@ export const NAV: NavEntry[] = [
   { key: "today", label: "Accueil", icon: "grid", href: "/dashboard" },
   { key: "money", label: "Trésorerie", icon: "shield", href: "/dashboard/assets", tabs: [
     { href: "/dashboard/assets", label: "Actifs" },
+    { href: "/dashboard/funding", label: "À approvisionner" },
     { href: "/dashboard/treasury", label: "Couverture" },
     { href: "/dashboard/custody", label: "Réserve de retrait" },
     { href: "/dashboard/sweep", label: "Collecte des dépôts" },

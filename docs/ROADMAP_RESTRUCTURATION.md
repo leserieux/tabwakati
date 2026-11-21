@@ -25,7 +25,7 @@ Objectif : un dashboard d'administration du niveau de ceux de Binance, Coinbase 
 | Entrée | Onglets | Question à laquelle elle répond |
 |---|---|---|
 | Accueil | — | Tout va bien ? Que dois-je traiter ? |
-| Trésorerie | Actifs · Couverture · Réserve de retrait · Collecte des dépôts · Liquidité des échanges · Plan staking | Combien je dois, combien je détiens, où est l'argent ? |
+| Trésorerie | Actifs · À approvisionner · Couverture · Réserve de retrait · Collecte des dépôts · Liquidité des échanges · Plan staking | Combien je dois, combien je détiens, où est l'argent ? |
 | Opérations | File d'attente · Transactions · Tâches | Qu'est-ce qui est bloqué ou en échec ? |
 | Utilisateurs | Liste · Croissance · Rétention & valeur · Acquisition · Rentabilité | Qui sont mes utilisateurs, combien ils rapportent ? |
 | Revenus | Résultat · Frais · Dépôts | Combien je gagne, et d'où ça vient ? |
@@ -49,18 +49,20 @@ Les URLs existantes ne changent pas : seul leur rattachement à une entrée chan
 | Liquidité des échanges | liquidité (swap) |
 | Dû aux utilisateurs / Détenu / Écart | passif / actif / delta |
 
-## 5. Phases
+## 5. Phases (réordonnées le 2026-11-20 : d'abord ce qui aide à décider)
+
+Constat après la phase 0 : réorganiser la navigation et les mots ne suffit pas. Un admin doit pouvoir décider. Les phases suivent donc ses priorités : quoi approvisionner, savoir si un chiffre est normal, savoir ce qui rapporte, repérer les utilisateurs à risque.
 
 | Phase | Contenu | État |
 |---|---|---|
-| 0 | Navigation par tâche (8 entrées, 1 mot par onglet), page **Actifs** (liste + fiche actif), page **File d'attente**, **nouvel accueil** (état, 8 chiffres clés, actions triées par impact, actifs à surveiller) | **Fait (2026-11-20)** |
-| 1 | **Vocabulaire** : appliquer le glossaire à toutes les pages (titres, aides, alertes, libellés de colonnes) | À faire |
-| 2 | **Trésorerie consolidée** : la fiche actif reçoit en onglets la couverture, la réserve de retrait, la collecte, la liquidité et le plan staking de l'actif ; les pages globales deviennent des vues de synthèse sans doublon | À faire |
-| 3 | **Recherche globale** (barre en haut : utilisateur, e-mail, transaction, hash, actif) et **fiche utilisateur** en 3 blocs (résumé · argent · activité) ; filtres et exports homogènes sur tous les tableaux | À faire |
-| 4 | **Pages produits** au format « résumé + tableau + détails repliés » : Prêts, Futures, Jeux, Dépôts, Fiche utilisateur | À faire |
-| 5 | **Confiance des chiffres** : fraîcheur affichée (« actualisé il y a … ») sur chaque bloc, capteur d'écart par actif (stock non financé), motif obligatoire pour toute écriture manuelle, états vides et erreurs explicites | À faire |
-| 6 | **Rôles et sécurité** : lecture seule / opérateur / administrateur, confirmation des actions sensibles, double validation au-delà d'un seuil, authentification renforcée, journal d'audit relié à chaque action | À faire |
-| 7 | **Tendances et alertes** : courbes 7/30/90 jours sur les chiffres clés, seuils d'alerte configurables, notification (Telegram / e-mail) | À faire |
+| 0 | Navigation par tâche (8 entrées), pages **Actifs** (liste + fiche), **File d'attente**, **nouvel accueil** | **Fait (2026-11-20)** |
+| 1 | **Décision : quoi approvisionner et quand.** Autonomie par actif (jours au pire jour et au rythme moyen), test de stress (les 1, 5, 10 plus gros soldes retirent ensemble), action chiffrée avec la source (coffre, collecte, extérieur), alertes de l'accueil reformulées avec montants. Page `/dashboard/funding`, section dans la fiche actif, colonne Autonomie dans Actifs | **Fait (2026-11-20)** |
+| 2 | **Décision : ce chiffre est-il normal ?** Chaque chiffre clé comparé à la période précédente (variation en % et flèche), mini-courbes 7/30 jours, écart à la moyenne signalé quand il sort de l'ordinaire | À faire |
+| 3 | **Décision : ce qui rapporte.** Résultat décomposé par source (frais, marge sur dépôts et échanges, intérêts de staking versés, prêts, jeux, futures) et par produit, avec ce que chaque produit rapporte ou coûte par utilisateur actif | À faire |
+| 4 | **Décision : utilisateurs à risque ou à forte valeur.** Concentration des soldes par actif, gros retraits probables, utilisateurs les plus rentables, comportements inhabituels | À faire |
+| 5 | **Confiance des chiffres** : fraîcheur affichée sur chaque bloc, capteur d'écart par actif, motif obligatoire pour toute écriture manuelle, états vides et erreurs explicites | À faire |
+| 6 | **Rôles et sécurité** : lecture seule / opérateur / administrateur, confirmation des actions sensibles, double validation au-delà d'un seuil, journal d'audit relié à chaque action | À faire |
+| 7 | Finitions : application du glossaire à toutes les pages, recherche globale, fusion des pages de trésorerie dans la fiche actif, pages produits au format « résumé + tableau + détails repliés » | À faire (priorité basse : surtout de la lisibilité) |
 
 ## 6. Critères de réussite
 
