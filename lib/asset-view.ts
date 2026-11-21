@@ -1,4 +1,5 @@
 import { EPS, type Line, type Status } from "@/lib/solvency";
+import { formatNumber } from "@/lib/format";
 
 /** Présentation partagée d'une ligne de trésorerie (accueil, liste des actifs, fiche actif) : un seul vocabulaire partout. */
 export type StatusTone = "ok" | "warn" | "bad" | "info";
@@ -35,4 +36,12 @@ export function lineUsd(l: Line, qty: number | null): number | null {
 /** Nom lisible du lieu où se trouve l'argent (argent mobile = chez le prestataire). */
 export function isMobileLine(l: Line): boolean {
   return l.label.includes("PawaPay");
+}
+
+/** Pourquoi la lecture d'un actif est incomplète, en une phrase (null si tout est lisible). */
+export function lineReadNote(l: Line): string | null {
+  if (l.have !== null) return null;
+  const nets = l.failedNetworks?.length ? ` Réseau(x) illisible(s) : ${l.failedNetworks.join(", ")}.` : "";
+  const partial = l.partialHave !== undefined ? ` Déjà lu sur les autres réseaux : ${formatNumber(l.partialHave)} ${l.asset} (minimum détenu).` : "";
+  return `${l.error || "Lecture impossible."}${nets}${partial}`;
 }

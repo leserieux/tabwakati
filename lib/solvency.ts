@@ -30,6 +30,9 @@ export interface Line {
   hot?: number | null; // portefeuille de retrait (ou chez le prestataire pour l'argent mobile)
   vault?: number; // coffre
   onUsers?: number; // pas encore ramassé sur les adresses des utilisateurs
+  // Actif lu sur plusieurs réseaux dont certains sont illisibles : `have` reste null (on ne devine pas), mais on garde ce qui a pu être lu.
+  partialHave?: number; // somme des réseaux lus (minimum de ce qui est détenu)
+  failedNetworks?: string[]; // réseaux dont la lecture a échoué
 }
 
 // ─────────────────────────── Chargement des données ───────────────────────────
@@ -119,6 +122,8 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
     if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
 
     const multi = members.length > 1;
+    const failedNetworks = cs.filter(({ c }) => !c || c.total === null).map(({ m }) => m.network);
+    const partialHave = multi && have === null ? cs.reduce((n, { c }) => n + (c && c.total !== null ? c.total : 0), 0) : undefined;
     const priceUsd = prices.get(ledger) ?? members.map((m) => prices.get(m.symbol)).find((p) => p !== undefined) ?? null;
 
     return {
@@ -137,7 +142,9 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
         : undefined,
       hot: treasury,
       vault,
-      onUsers: users
+      onUsers: users,
+      partialHave,
+      failedNetworks: failedNetworks.length ? failedNetworks : undefined
     };
   });
 
