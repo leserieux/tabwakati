@@ -3,8 +3,8 @@ import { futuresTodos, loadFuturesMoney } from "@/lib/futures";
 import MoneyHero from "@/app/dashboard/futures/money-hero";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
-import { buildPlans, ensureTodaySnapshot } from "@/lib/custody-policy";
-import { summarize as summarizeCustody } from "@/lib/custody-plan";
+import { ensureTodaySnapshot } from "@/lib/custody-policy";
+import { loadFunding, actionText, type FundingLine } from "@/lib/funding";
 import { loadPnl } from "@/lib/pnl";
 import { loadControls } from "@/lib/controls";
 import { statusLabel, statusTone, lineRatio } from "@/lib/asset-view";
@@ -60,19 +60,23 @@ export default async function TodayPage() {
   const sweepFailCount = sweepFails.count || 0;
 
   // ── À traiter : chaque ligne renvoie vers la page où l'on agit ──
-  // Réserve de retrait : jamais bloquant pour l'accueil (si ça échoue, on n'affiche simplement pas l'alerte).
-  let custodySummary: ReturnType<typeof summarizeCustody> | null = null;
+  // Plan d'approvisionnement (réserve de retrait + autonomie + test de stress) : jamais bloquant pour l'accueil.
+  let funding: FundingLine[] = [];
   try {
-    const { plans } = await buildPlans(sol);
-    custodySummary = summarizeCustody(plans);
-    await ensureTodaySnapshot(plans); // relevé quotidien, même si personne n'ouvre la page « Réserve de retrait »
+    const f = await loadFunding(sol);
+    funding = f.lines;
+    await ensureTodaySnapshot(f.lines.map((l) => l.plan)); // relevé quotidien, même si personne n'ouvre la page « Réserve de retrait »
   } catch (e) {
-    console.error("[accueil] réserve de retrait non calculée:", e);
+    console.error("[accueil] plan d'approvisionnement non calculé:", e);
   }
 
   const todo: Todo[] = [];
-  if (custodySummary && custodySummary.danger.length) todo.push({ tone: "bad", text: `Un gros retrait pourrait échouer sur : ${custodySummary.danger.map((p) => p.asset).join(", ")}. Ajoute de l'argent sur les portefeuilles concernés.`, href: "/dashboard/treasury" });
-  if (custodySummary && custodySummary.refill.length) todo.push({ tone: "warn", text: `Portefeuille de retrait à remplir bientôt : ${custodySummary.refill.map((p) => p.asset).join(", ")}.`, href: "/dashboard/treasury" });
+  for (const f of funding) {
+    if (f.urgency === "now") todo.push({ tone: "bad", text: actionText(f), href: "/dashboard/funding", usd: f.action.usd ?? undefined });
+    else if (f.urgency === "soon") todo.push({ tone: "warn", text: actionText(f), href: "/dashboard/funding", usd: f.action.usd ?? undefined });
+  }
+  const watchAssets = funding.filter((f) => f.urgency === "watch").map((f) => f.plan.asset);
+  if (watchAssets.length) todo.push({ tone: "info", text: `Si les plus gros utilisateurs retiraient ensemble, il faudrait d'abord déplacer de l'argent du coffre sur : ${watchAssets.join(", ")}.`, href: "/dashboard/funding" });
   if (cov.missingUsd > 0.01) todo.push({ tone: "bad", text: `Il manque environ ${formatUsd(cov.missingUsd)} pour couvrir ce que tu dois aux utilisateurs. Ouvre la liste des actifs pour voir lesquels approvisionner.`, href: "/dashboard/assets", usd: cov.missingUsd });
   if (sol.error) todo.push({ tone: "bad", text: `Couverture non calculable : ${sol.error}.`, href: "/dashboard/treasury" });
   if (unreadable.length) todo.push({ tone: "warn", text: `Solde réel illisible pour : ${unreadable.join(", ")} (exclus de la couverture).`, href: "/dashboard/treasury" });

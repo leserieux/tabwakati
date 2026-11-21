@@ -1,6 +1,8 @@
 import { getSupabaseAdmin, loadPrices, q } from "@/lib/data";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { loadStakingPlanData } from "@/lib/staking-plan-data";
+import { loadFunding, actionText, URGENCY_LABEL, URGENCY_TONE } from "@/lib/funding";
+import { RunwayCell, StressRows } from "@/components/funding-view";
 import { statusLabel, statusTone, lineGap, lineRatio, lineUsd, isMobileLine } from "@/lib/asset-view";
 import { txTypeLabel, txStatusTone, txStatusLabel } from "@/lib/transactions";
 import { formatNumber, formatUsd, formatPct, formatDateTime, formatDate, shortId } from "@/lib/format";
@@ -36,6 +38,7 @@ export default async function AssetPage({ params }: { params: { symbol: string }
     );
   }
 
+  const funding = (await loadFunding({ crypto, mobile })).lines.find((f) => f.plan.asset === line.asset);
   const db = getSupabaseAdmin();
   const txs = await q<TxRow>(db.from("transactions").select("id, user_id, type, amount, status, created_at").eq("asset_symbol", line.asset).order("created_at", { ascending: false }).limit(15));
   const userIds = [...new Set(txs.rows.map((t) => t.user_id).filter(Boolean))];
@@ -63,6 +66,27 @@ export default async function AssetPage({ params }: { params: { symbol: string }
         <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Détenu</span><span className="wk-exchange-kpi-value">{line.have === null ? "illisible" : formatNumber(line.have)}</span><span className="wk-exchange-kpi-detail">{lineUsd(line, line.have) === null ? "" : formatUsd(lineUsd(line, line.have) as number)}</span></div>
         <div className={`wk-exchange-kpi ${gap === null ? "" : gap < -1e-8 ? "wk-exchange-kpi-negative" : "wk-exchange-kpi-positive"}`}><span className="wk-exchange-kpi-label">Écart</span><span className="wk-exchange-kpi-value">{gap === null ? "—" : `${gap > 0 ? "+" : ""}${formatNumber(gap)}`}</span><span className="wk-exchange-kpi-detail"><Pill tone={tone}>{statusLabel(line.status)}</Pill></span></div>
       </div>
+
+      {funding && (
+        <Section title="Autonomie et test de stress" hint="Combien de temps ce qui est prêt à partir paie les retraits, et ce qui se passerait si les plus gros utilisateurs retiraient ensemble.">
+          <div className="wk-panel">
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+              <Pill tone={URGENCY_TONE[funding.urgency]}>{URGENCY_LABEL[funding.urgency]}</Pill>
+              <span>Au pire jour : <RunwayCell days={funding.runwayPeak} empty="aucun retrait observé" /></span>
+              <span>Au rythme moyen : <RunwayCell days={funding.runwayAvg} empty="aucun retrait observé" /></span>
+              {funding.unlock7 > 0 && <span>Staking bloqué à échéance sous 7 jours : {formatNumber(funding.unlock7)} {line.asset}</span>}
+            </div>
+            {funding.action.kind !== "none" && <p style={{ margin: "0 0 14px" }}><strong>À faire : </strong>{actionText(funding)}</p>}
+            {funding.stress.length === 0 ? <Empty text="Aucun solde utilisateur à tester." /> : (
+              <TableWrap>
+                <thead><tr><Th>Cas</Th><Th right>À payer</Th><Th>Résultat</Th></tr></thead>
+                <tbody><StressRows f={funding} /></tbody>
+              </TableWrap>
+            )}
+            <p className="wk-panel-hint" style={{ marginTop: 12, marginBottom: 0 }}><a className="wk-link" href="/dashboard/funding">Tous les actifs à approvisionner →</a></p>
+          </div>
+        </Section>
+      )}
 
       <div className="wk-grid-2" style={{ marginTop: 20 }}>
         <Section title="Où se trouve l'argent" hint={line.note}>

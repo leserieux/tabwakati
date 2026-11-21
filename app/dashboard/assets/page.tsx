@@ -2,6 +2,8 @@ import { loadPrices } from "@/lib/data";
 import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { loadStakingPlanData } from "@/lib/staking-plan-data";
+import { loadFunding } from "@/lib/funding";
+import { RunwayCell } from "@/components/funding-view";
 import { statusLabel, statusTone, lineGap, lineRatio, lineUsd } from "@/lib/asset-view";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote } from "@/components/ui";
@@ -17,6 +19,7 @@ export default async function AssetsPage() {
   const prices = await loadPrices();
   const [{ crypto, mobile, error }, staking] = await Promise.all([loadSolvencyLines(prices), loadStakingPlanData()]);
   const lines = [...crypto, ...mobile];
+  const fundingBy = new Map((await loadFunding({ crypto, mobile })).lines.map((f) => [f.plan.asset, f]));
 
   const cov = computeCoverage(lines.filter((l) => l.have !== null).map((l) => ({ asset: l.asset, owed: l.owe, held: l.have as number, price: l.priceUsd })));
   const stakedBy = new Map<string, number>();
@@ -39,10 +42,10 @@ export default async function AssetsPage() {
         <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Couverture du dû</span><span className="wk-exchange-kpi-value">{Number.isNaN(cov.coveragePct) ? "—" : formatPct(cov.coveragePct)}</span><span className="wk-exchange-kpi-detail">{nBad > 0 ? `${nBad} actif(s) à traiter` : "aucun actif à traiter"}</span></div>
       </div>
 
-      <Section title="Tous les actifs" hint="Les actifs à traiter sont en haut. Un surplus sur un actif ne compense jamais le manque d'un autre. WAKATI, jeton interne, a sa propre section « WAKATI ».">
+      <Section title="Tous les actifs" hint="« Autonomie » = combien de jours le portefeuille de retrait tient au pire jour de retraits observé (détail dans À approvisionner). Les actifs à traiter sont en haut. Un surplus sur un actif ne compense jamais le manque d'un autre. WAKATI, jeton interne, a sa propre section « WAKATI ».">
         {sorted.length === 0 ? <Empty text="Aucun actif à afficher." /> : (
           <TableWrap>
-            <thead><tr><Th>Actif</Th><Th right hideSm>Prix</Th><Th right>Dû</Th><Th right>Détenu</Th><Th right>Écart</Th><Th hideSm>Couverture</Th><Th right hideSm>Staké</Th><Th>Statut</Th></tr></thead>
+            <thead><tr><Th>Actif</Th><Th right hideSm>Prix</Th><Th right>Dû</Th><Th right>Détenu</Th><Th right>Écart</Th><Th hideSm>Couverture</Th><Th right hideSm>Staké</Th><Th hideSm>Autonomie</Th><Th>Statut</Th></tr></thead>
             <tbody>
               {sorted.map((l) => {
                 const gap = lineGap(l);
@@ -56,6 +59,7 @@ export default async function AssetsPage() {
                     <Td right label="Écart"><span className={gap === null ? "" : gap < -1e-8 ? "wk-bad" : "wk-ok"}>{gap === null ? "—" : `${gap > 0 ? "+" : ""}${formatNumber(gap)}`}</span></Td>
                     <Td hideSm label="Couverture"><CoverageBar ratio={lineRatio(l)} tone={statusTone(l.status)} /></Td>
                     <Td right hideSm label="Staké">{stakedQty === undefined ? "—" : formatNumber(stakedQty)}</Td>
+                    <Td hideSm label="Autonomie"><RunwayCell days={fundingBy.get(l.asset)?.runwayPeak ?? null} empty="—" /></Td>
                     <Td label="Statut"><Pill tone={statusTone(l.status)}>{statusLabel(l.status)}</Pill></Td>
                   </tr>
                 );
