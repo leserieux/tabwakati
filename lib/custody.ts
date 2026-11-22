@@ -23,6 +23,7 @@ export interface CustodyLine {
   usersFailed: number; // adresses utilisateur dont la lecture a échoué
   total: number | null; // treasury + vault + users — la vraie custody actuelle, null si une lecture a échoué
   error?: string;
+  readAt?: number; // heure de la lecture (ms) : permet d'afficher « lu à 14:32 » et de savoir si une valeur vient du cache
 }
 
 /**
@@ -31,7 +32,7 @@ export interface CustodyLine {
  * donc ignorer les adresses utilisateurs sous-estime largement ce que la plateforme détient vraiment).
  * Ignore les actifs "Fiat" (pas de lecture on-chain possible).
  */
-export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<Map<string, CustodyLine>> {
+async function readOnchainCustody(assets: CustodyAssetInput[]): Promise<Map<string, CustodyLine>> {
   const db = getSupabaseAdmin();
   const { data: userAddrs } = await db.from("user_addresses").select("asset_symbol, address").eq("is_active", true);
 
@@ -121,4 +122,46 @@ export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<M
   );
 
   return result;
+}
+
+// ─────────────────────────── Cache de lecture ───────────────────────────
+// Lire la blockchain coûte plusieurs secondes et dépend de nœuds publics parfois saturés. L'accueil, Actifs, À approvisionner
+// et la fiche d'un actif lisent les mêmes soldes : on garde une lecture COMPLÈTE et réussie 90 secondes (par instance serveur),
+// et on partage la lecture en cours si plusieurs pages la demandent en même temps. Une lecture avec la moindre erreur n'est jamais gardée.
+
+const CACHE_TTL_MS = 90_000;
+type Entries = [string, CustodyLine][];
+const cache = new Map<string, { at: number; entries: Entries }>();
+const inflight = new Map<string, Promise<Entries>>();
+const lastGood = new Map<string, CustodyLine>(); // dernière lecture valide par symbole (peut dater de plusieurs minutes)
+
+/** Dernière lecture valide d'un symbole sur cette instance serveur (undefined si aucune depuis le démarrage). */
+export function getLastGoodCustody(symbol: string): CustodyLine | undefined {
+  return lastGood.get(symbol);
+}
+
+function cacheKey(assets: CustodyAssetInput[]): string {
+  return JSON.stringify(assets.map((a) => [a.symbol, a.network, a.contract_address, a.decimals]).sort());
+}
+
+export async function loadOnchainCustody(assets: CustodyAssetInput[]): Promise<Map<string, CustodyLine>> {
+  const key = cacheKey(assets);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return new Map(hit.entries);
+
+  let pending = inflight.get(key);
+  if (!pending) {
+    pending = readOnchainCustody(assets)
+      .then((m) => {
+        const at = Date.now();
+        const entries: Entries = [...m.entries()].map(([symbol, line]) => [symbol, { ...line, readAt: at }]);
+        for (const [symbol, line] of entries) if (line.total !== null) lastGood.set(symbol, line);
+        const clean = entries.every(([, line]) => line.total !== null && line.usersFailed === 0 && !line.error);
+        if (clean) cache.set(key, { at, entries });
+        return entries;
+      })
+      .finally(() => inflight.delete(key));
+    inflight.set(key, pending);
+  }
+  return new Map(await pending);
 }

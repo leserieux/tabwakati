@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/data";
-import { loadOnchainCustody } from "@/lib/custody";
+import { loadOnchainCustody, getLastGoodCustody } from "@/lib/custody";
 import { fetchPawapayWallets } from "@/lib/pawapay";
 import { formatNumber } from "@/lib/format";
 
@@ -33,6 +33,9 @@ export interface Line {
   // Actif lu sur plusieurs réseaux dont certains sont illisibles : `have` reste null (on ne devine pas), mais on garde ce qui a pu être lu.
   partialHave?: number; // somme des réseaux lus (minimum de ce qui est détenu)
   failedNetworks?: string[]; // réseaux dont la lecture a échoué
+  readAt?: number; // heure de lecture des soldes on-chain (ms)
+  // Si l'actif est illisible : dernière valeur COMPLÈTE lue sur cette instance serveur (pour information, jamais utilisée dans les calculs).
+  lastKnown?: { have: number; at: number };
 }
 
 // ─────────────────────────── Chargement des données ───────────────────────────
@@ -124,6 +127,15 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
     const multi = members.length > 1;
     const failedNetworks = cs.filter(({ c }) => !c || c.total === null).map(({ m }) => m.network);
     const partialHave = multi && have === null ? cs.reduce((n, { c }) => n + (c && c.total !== null ? c.total : 0), 0) : undefined;
+    const readTimes = cs.map(({ c }) => c?.readAt).filter((t): t is number => typeof t === "number");
+    const readAt = readTimes.length ? Math.min(...readTimes) : undefined;
+    let lastKnown: { have: number; at: number } | undefined;
+    if (have === null) {
+      const goods = members.map((m) => getLastGoodCustody(m.symbol));
+      if (goods.every((g) => g && g.total !== null && typeof g.readAt === "number")) {
+        lastKnown = { have: goods.reduce((n, g) => n + (g!.total as number), 0), at: Math.min(...goods.map((g) => g!.readAt as number)) };
+      }
+    }
     const priceUsd = prices.get(ledger) ?? members.map((m) => prices.get(m.symbol)).find((p) => p !== undefined) ?? null;
 
     return {
@@ -144,7 +156,9 @@ export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, nu
       vault,
       onUsers: users,
       partialHave,
-      failedNetworks: failedNetworks.length ? failedNetworks : undefined
+      failedNetworks: failedNetworks.length ? failedNetworks : undefined,
+      readAt,
+      lastKnown
     };
   });
 

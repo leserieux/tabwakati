@@ -31,6 +31,7 @@ export function StressRows({ f }: { f: FundingLine }) {
         <tr key={c.key}>
           <td className="wk-td" data-label="Cas">{c.label}{c.users > 1 ? <div className="wk-asset-sub">{c.users} utilisateurs</div> : null}</td>
           <td className="wk-td wk-right" data-label="À payer">{formatNumber(c.need)} {f.plan.asset}</td>
+          <td className="wk-td wk-right" data-label="Part du dû">{f.plan.owe > 1e-8 ? `${Math.round((c.need / f.plan.owe) * 100)} %` : "—"}</td>
           <td className="wk-td" data-label="Résultat"><StressPill c={c} asset={f.plan.asset} /></td>
         </tr>
       ))}

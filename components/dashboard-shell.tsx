@@ -4,7 +4,7 @@ import { useState } from "react";
 import Nav from "@/components/nav";
 import LogoutButton from "@/app/dashboard/logout-button";
 
-export default function DashboardShell({ actor, children }: { actor: string | null; children: React.ReactNode }) {
+export default function DashboardShell({ actor, readOnly = false, children }: { actor: string | null; readOnly?: boolean; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -17,7 +17,7 @@ export default function DashboardShell({ actor, children }: { actor: string | nu
         </div>
         <Nav collapsed={collapsed} />
         <div className="wk-side-foot">
-          {actor && <div className="wk-user-chip"><span className="wk-user-name">{collapsed ? actor.slice(0, 1).toUpperCase() : `Connecté : ${actor}`}</span></div>}
+          {actor && <div className="wk-user-chip"><span className="wk-user-name">{collapsed ? actor.slice(0, 1).toUpperCase() : `Connecté : ${actor}${readOnly ? " (lecture seule)" : ""}`}</span></div>}
           <LogoutButton />
         </div>
       </aside>
