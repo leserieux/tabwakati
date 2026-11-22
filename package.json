@@ -1,12 +1,16 @@
 {
-  "name": "wakati-dashboard",
-  "version": "0.2.0",
+  "name": "wakati-admin",
+  "version": "0.3.0",
   "private": true,
+  "description": "Console d'administration Wakati (Next.js + Supabase)",
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
   },
   "dependencies": {
     "next": "14.2.35",

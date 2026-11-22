@@ -1,91 +1,182 @@
-# Règle importante pour les actifs
+# Wakati Admin
 
-Les écrans génériques d'administration traitent **tous les actifs de la même manière**. `WAKATI` est un actif interne à l'application, mais il n'est pas une exception dans les vues générales.
+Console d'administration de la plateforme Wakati (portefeuille crypto, staking, prêts, futures, jeux, jeton interne WAKATI, mobile money). Next.js 14 + Supabase, déployée sur Vercel.
 
-## Règles pour les développeurs et les agents IA
+Ambition : un back-office du niveau de ceux de Binance, Coinbase ou Bybit. Un admin ouvre la console, comprend en 5 secondes si tout va bien, voit ce qu'il doit traiter, et retrouve n'importe quel chiffre en 2 clics.
 
-- Ne jamais coder en dur `WAKATI` dans une page générique.
-- Utiliser `supported_assets` et `asset_symbol` comme clé de regroupement.
-- Agréger `user_balances` actif par actif et valoriser avec `asset_prices`.
-- Ne jamais additionner des quantités d'actifs différents ; les agrégats multi-actifs sont en USD.
-- La couverture de trésorerie est calculée actif par actif.
-- Les pages génériques découvrent automatiquement les nouveaux actifs.
+## Ce que fait la console
+
+| Entrée | Contenu |
+|---|---|
+| **Accueil** | État de la plateforme, chiffres clés comparés à la période précédente, actions à traiter triées par gravité |
+| **Trésorerie** | Actifs (dû / détenu / écart), à approvisionner, couverture, réserve de retrait, collecte des dépôts, liquidité des échanges, plan staking |
+| **Opérations** | File d'attente (bloqué ou en échec), transactions, tâches |
+| **Utilisateurs** | Liste et fiche, croissance, rétention et valeur, acquisition, rentabilité |
+| **Revenus** | Résultat (P&L), frais, dépôts |
+| **Produits** | Prêts, staking, futures, jeux, roue, P2P, marchés |
+| **WAKATI** | Tokenomics, prix et réserve, offre, ventes et caisse, burns, détenteurs |
+| **Système** | Contrôles automatiques, journal d'audit, administrateurs, notifications, bot Telegram, app mobile, paramètres |
+
+## Démarrage rapide
+
+Prérequis : Node 20 ou plus.
+
+```bash
+npm install
+cp .env.example .env.local     # puis remplir les valeurs (voir ci-dessous)
+npm run dev                    # http://localhost:3000
+```
+
+Avant chaque commit ou déploiement :
+
+```bash
+npm run check                  # typecheck + tests
+npm run build                  # build de production
+```
+
+| Commande | Rôle |
+|---|---|
+| `npm run dev` | Serveur de développement |
+| `npm run typecheck` | Vérification TypeScript |
+| `npm test` | Tests unitaires (vitest) de la logique de calcul et de sécurité |
+| `npm run check` | Typecheck puis tests |
+| `npm run build` / `npm start` | Build et lancement de production |
+
+## Variables d'environnement
+
+Modèle complet commenté : [`.env.example`](.env.example). Sur Vercel : *Settings › Environment Variables*.
+
+| Variable | Obligatoire | Rôle |
+|---|---|---|
+| `SESSION_SECRET` | oui | Signe les sessions (32 caractères aléatoires ou plus : `openssl rand -hex 32`) |
+| `ADMIN_PASSWORD` | oui | Accès partagé « admin » (ancien mode) |
+| `ADMIN_VIEWER_PASSWORD` | non | Second mot de passe, accès en lecture seule |
+| `ADMIN_LEGACY_LOGIN` | non | `off` interdit l'accès partagé (comptes nominatifs seulement) |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | oui | Base de données (clé serveur, jamais exposée au navigateur) |
+| `CRON_SECRET` | oui | Autorise la tâche planifiée `/api/cron/*` |
+| `DASHBOARD_API_SECRET` | oui | Lecture des soldes PawaPay |
+| `TREASURY_EVM_ADDRESS`, `TREASURY_BTC_ADDRESS` | oui | Adresses **publiques** de la trésorerie |
+| `VAULT_EVM_ADDRESS`, `VAULT_BTC_ADDRESS` | non | Coffre (stockage à froid) |
+| `POLYGON_RPC_URL`, `BSC_RPC_URL`, `ETHEREUM_RPC_URL` | non | RPC publics (valeurs par défaut fournies) |
+
+## Structure
+
+```
+src/app/dashboard/…   pages (fines)         src/core/       auth, base de données, formats, navigation
+src/modules/<domaine> logique métier         src/components/ interface partagée
+tests/                tests unitaires        mobile/         app Flutter (à sortir de ce dépôt)
+docs/                 conventions, journal   supabase/       schéma SQL (à compléter)
+```
+
+Détail, règles de dépendance et recette « ajouter une page » : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Sécurité en bref
+
+- `/dashboard/*` : le middleware exige un jeton **signé** et non expiré ; chaque page et chaque action serveur revérifie.
+- Toute action qui écrit commence par `assertCan()` / `assertCanWrite()` ; toute route `/api/*` commence par `getRequestSession()`.
+- Rôles : super-admin, finance, support, risque, lecture seule (`src/core/auth/permissions.ts`).
+- Toute action sensible est inscrite au journal d'audit.
+- Aucune clé privée dans le dépôt : adresses publiques uniquement.
+
+Règles complètes (actifs, comptabilité, SQL, interface) : [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
+
+---
 
 ## Roadmap
 
-- [x] Phase 1 — Socle analytique et historique des scores.
-- [x] Phase 2 — Fiche utilisateur, KPI, performance par actif et risques.
-- [x] Phase 2C — Fenêtres 7/30/90 jours et décision narrative.
-- [x] Phase 3A — Fondation cohortes et analytics plateforme.
-- [x] Phase 3B — Page analytics visible, alimentée uniquement par les tables réelles : `users`, `user_balances`, `transactions`, `asset_prices`, `platform_fees`, `user_risk_score_history`.
-- [x] Phase 3C — Cohortes, rétention, churn, valeur vie (LTV) et monétisation : page `/dashboard/analytics/cohortes` (onglet Marchés & analytics > Cohortes & LTV), logique dans `lib/cohorts.ts` et fonctions SQL `admin_*`.
-- [x] Phase 4 — Coût historique d'acquisition et P&L réel : valorisation au prix du jour (`lib/pnl.ts`) et page `/dashboard/pnl/acquisition` (`lib/acquisition.ts`).
-- [ ] **Restructuration du dashboard** (voir `docs/ROADMAP_RESTRUCTURATION.md`) : phases 0, 1, 2, 5, 6 et tests faits (voir la roadmap) ; phases 3 et 4 partielles ; finitions à faire.
+Principe : **une phase à la fois**. Une phase est terminée quand `npm run check` et `npm run build` passent, qu'elle est déployée et que ses critères sont vérifiés. Ne pas commencer la suivante avant. Les phases 1 à 3 consolident ; les phases 4 à 6 ajoutent ce qui distingue une console d'exchange.
 
-## Règles d'implémentation
+### Phase 0 : assainissement ✅ (fait, refonte du 2026-11-22)
 
-- Le schéma réel et les fonctions publiques du dossier `supabase/migrations` sont la source de vérité.
-- Aucune page ne doit dépendre d'une vue SQL non déployée.
-- Le design existant du dashboard est conservé.
-- Toute valeur multi-actifs affichée est valorisée en USD.
-- La variation nette et la performance comptable ne sont jamais présentées comme un P&L réel.
+- [x] Application mobile Flutter séparée du dashboard (`mobile/`)
+- [x] Code rangé par domaine (`src/core`, `src/modules/*`), alias `@/` unique
+- [x] 24 layouts identiques remplacés par un seul ; onglets manquants corrigés (Réserve de retrait, Administrateurs)
+- [x] Middleware : vérification de la signature du jeton (avant : simple présence du cookie)
+- [x] Garde commune des routes API ; collecte réelle de nouveau autorisée aux `super_admin`
+- [x] Un seul client Supabase par processus ; navigation sans rechargement (`next/link`)
+- [x] Page Crédit découpée : logique extraite dans un module testé (723 → ~520 lignes)
+- [x] Hygiène : `.env.example` sans valeurs réelles, `.gitignore`, fichiers obsolètes retirés
+- [x] README, ARCHITECTURE, CONVENTIONS, CHANGELOG ; tests 41 → 62
 
-## Journal
+### Phase 1 : mise en route et filet de sécurité
 
-- 2026-11-22 — **Restructuration, phases 2, 5, 6 et tests.** (1) **Sécurité** : le middleware ne vérifiait que la PRÉSENCE du cookie de session ; les 35 actions serveur ne contrôlaient rien elles-mêmes. Chacune appelle désormais `assertCanWrite()` (`lib/session.ts`), qui vérifie la signature et le rôle ; la collecte réelle (`/api/sweep/run`) aussi. **Rôle lecture seule** : second mot de passe optionnel `ADMIN_VIEWER_PASSWORD` (voir `.env.example`) ; le token de session porte le rôle (`lib/auth.ts`, anciens tokens toujours valides en admin). (2) **Fiabilité des soldes** : cache mémoire de 90 s des lectures on-chain complètes, lectures simultanées partagées, jamais de cache d'une lecture en erreur (`lib/custody.ts`) ; heure de lecture affichée ; pour un actif multi-réseaux dont un réseau échoue : minimum déjà lu et réseau fautif (`lib/solvency.ts`) ; dernière valeur connue en information, jamais utilisée dans un calcul (`lib/last-known.ts`) ; écran de chargement (`app/dashboard/loading.tsx`). (3) **Tendances** (`lib/trends.ts`) : volume, nouveaux utilisateurs, résultat et couverture comparés à la période précédente sur l'accueil, avec alertes quand l'écart dépasse 30 % (5 points pour la couverture). (4) Part du dû détenue par les 1, 5 et 10 plus gros soldes dans la fiche actif. (5) **Tests** : `npm test` (vitest) sur la couverture, l'autonomie, le test de stress, les tendances et les sessions ; la logique d'approvisionnement est séparée dans `lib/funding-core.ts` (pure). **À faire après récupération de ce zip** : `npm install` (ajoute vitest, met à jour `package-lock.json`), puis `npm test` et `npm run build`. Décision : AUCUNE alerte de trésorerie ne doit passer par le bot Telegram (public).
-- 2026-11-20 — **Restructuration, phase 1 : aide à la décision « quoi approvisionner et quand »**. Nouveau moteur `lib/funding.ts` (logique pure `computeFunding` + chargement `loadFunding`) qui s'appuie sur le plan de la Réserve de retrait (`lib/custody-plan`, mêmes cibles et seuils) et ajoute : l'**autonomie** (prêt à partir ÷ retraits par jour, au pire jour et au rythme moyen des 90 derniers jours), un **test de stress** (les 1, 5 et 10 plus gros soldes disponibles, lus dans `user_balances`, retirent en même temps : payable tout de suite / après déplacement du coffre ou de la collecte / insuffisant), une **urgence** (maintenant, bientôt, à surveiller…) et une **action chiffrée** avec la source (coffre, collecte, extérieur). Page `/dashboard/funding` (« À approvisionner », onglet de Trésorerie), section « Autonomie et test de stress » dans la fiche actif, colonne Autonomie dans la liste des actifs, alertes de l'accueil remplacées par des phrases chiffrées triées par montant. Limites assumées et affichées : seuls les soldes disponibles comptent (le staking n'apparaît qu'en information « échéance sous 7 jours »), le rythme moyen est sous-estimé si la plateforme a moins de 90 jours d'historique, les actifs multi-réseaux sont lus sous leur nom unifié. Aucune migration SQL, rien n'est déplacé automatiquement. Composants partagés : `components/funding-view.tsx`.
-- 2026-11-20 — **Restructuration du dashboard, phase 0** (roadmap : `docs/ROADMAP_RESTRUCTURATION.md`). Navigation par tâche en 8 entrées (`lib/nav-config.ts` : Accueil, Trésorerie, Opérations, Utilisateurs, Revenus, Produits, WAKATI, Système ; URLs inchangées, un mot par concept : « balayage » devient « Collecte des dépôts », « Solvabilité » devient « Couverture »). Nouvelles pages : **Actifs** (`/dashboard/assets`, une ligne par actif, mêmes calculs que Couverture via `lib/solvency`), **fiche actif** (`/dashboard/assets/[symbol]` : dû / détenu / écart, où se trouve l'argent, staking de l'actif, derniers mouvements), **File d'attente** (`/dashboard/operations` : transactions bloquées ou échouées avec les lignes réelles, prêts à surveiller, collectes en échec, dépôts suspendus). **Accueil refait** : état de la plateforme, 8 chiffres clés cliquables, actions triées par gravité puis par montant en jeu, actifs à surveiller ; le bloc « Aller à » est supprimé. Aucune migration SQL. Présentation partagée dans `lib/asset-view.ts`.
+Objectif : pouvoir modifier le code sans peur. *La refonte a été faite sans accès à `npm install` ni à la base : cette phase la valide en conditions réelles.*
 
-- 2026-11-18 (c) — **Feuille de style de base restaurée** (`app/globals.css`). Le zip du commit `4eb97a0` n'avait plus que la section « Vue d'ensemble business » : tout le design de base (variables de couleur `--ink`/`--surface`…, barre latérale, tableaux, cartes, pastilles, formulaires, jauges, version mobile) avait disparu lors de l'« incident de fichier vide », d'où un site sans mise en forme. Reconstitué à partir du CSS compilé du déploiement Vercel du 10 nov. (avant l'incident), reformaté, placé avant la section existante (conservée telle quelle). Ajout de 4 classes jamais définies : `wk-btn-primary`, `wk-callout-info`, `wk-field`, `wk-grid-3`. À retenir : ne jamais remplacer `globals.css` par un fichier partiel.
+- [ ] `npm install`, `npm run check`, `npm run build` (le `package-lock.json` doit être régénéré : il date d'avant l'ajout de vitest)
+- [ ] Déployer en **preview** Vercel et comparer avec la production : Accueil, Actifs, Couverture, Résultat, Crédit, fiche utilisateur (mêmes chiffres), puis tester connexion, déconnexion, un export CSV, un rôle lecture seule
+- [ ] Versionner le schéma : `supabase db pull` dans `supabase/migrations/` (voir `supabase/README.md`)
+- [ ] CI GitHub Actions : typecheck + tests + build à chaque Pull Request
+- [ ] ESLint + Prettier ; interdire `any` dans le code nouveau
+- [ ] Sortir `mobile/` dans son propre dépôt
 
-- 2026-11-18 (b) — **Intérêts de staking pour tous les plans, automatiques et dynamiques** (migration `20261118_staking_rewards_all_pools.sql`, appliquée sur wakatiapp). `distribute_staking_rewards()` ne lit plus d'id codé en dur ni `staking_config.apr` : chaque jour, chaque stake actif de chaque plan (présent ou futur, tout actif) reçoit montant × taux / 365 ; règle de taux unique `fn_staking_rate()` (flexible : `base_apy` courant du plan ; bloqué : `initial_apy` du stake) ; un plan désactivé paie encore ses stakers existants ; budget d'émission appliqué aux seuls intérêts WAKATI ; garde-fou « un calcul par jour UTC » (`staking_accrual_runs`) contre les doublons. Testé en transaction annulée, y compris avec un plan et un actif fictifs. Dashboard : `updateStakingPool` ne réécrit plus `staking_config` que pour le plan WAKATI d'origine (avant, tout plan flexible l'écrasait) ; contrôle « Calcul quotidien des intérêts de staking » ; la page Plan staking compare les intérêts à la trésorerie interne qui les paie (hors WAKATI).
+**Terminé quand** : la CI est verte, la preview donne les mêmes chiffres que la production, le schéma SQL est dans le dépôt.
 
-- 2026-11-18 — **Plan de staking** (Produits › Plan staking, migration `20261118_admin_staking_plan.sql`) : encours par plan et par durée de blocage, intérêts à verser (jour, 7, 30, 90 jours, 1 an), calendrier de déblocage, et décision par actif « combien envoyer en staking on-chain / combien garder dans les portefeuilles » (horizon 7/30/90 jours × scénario normal/prudent/extrême, s'appuie sur la politique de la page Réserve de retrait). Constat documenté : `distribute_staking_rewards()` ne crédite des intérêts qu'au plan WAKATI ; les plans bloqués (FCFA, MATIC, BTC) n'accumulent rien malgré leur taux affiché. Nouveau contrôle « Intérêts de staking réellement crédités ». Logique de décision pure et testée : `lib/staking-plan.ts`.
+### Phase 2 : sécurité et rôles de niveau exchange
 
-- 2026-11-17 — Mise à niveau du dashboard sur les nouveautés de l'app (migration `20261117_admin_markets_push_telegram_p2p.sql`, appliquée sur wakatiapp) : **Futures multi-actifs** (tableau des marchés BTC/BNB/POL avec exposition et résultat plateforme, réglages levier max / marge de maintenance / activation par marché ; la marge de maintenance globale n'est plus lue à l'ouverture) ; **Notifications** (appareils push, activation des types, envoi de messages avec résultat réel via l'edge function `send-push`) ; **Bot Telegram** (comptes liés, journal des liaisons) ; **P2P** (volume et frais par actif, derniers transferts) ; contrôles « Prix des jeux » et « game-price-feed » ; fiche utilisateur : historique du profil et lien Telegram ; stats futures : une clôture partielle n'est plus comptée comme un trade (`admin_futures_period`, vues `admin_futures_daily` et `admin_futures_traders`). Le fichier `20261108_futures_admin.sql` du dépôt est en retard sur la base (la base avait déjà `partial` dans « manuel ») : la migration 20261117 fait foi.
+Objectif : qu'aucun compte ne puisse faire plus que son métier, et que rien de sensible ne se fasse seul.
 
-- 2026-09-25 — Mise en place du dashboard analytics visible et correction des dépendances SQL pour utiliser uniquement les relations existantes.
-- 2026-10-03 — Navigation ramenée à 8 entrées avec onglets de section (`lib/nav-config.ts`, `components/section-tabs.tsx`) ; « Activité » fusionnée dans la Vue d'ensemble (redirection conservée) ; valorisation centralisée dans `lib/valuation.ts` (un prix <= 0 n'est plus un prix : l'actif est signalé « non valorisé ») ; compteur de tours de roue recompté depuis `wheel_spins` ; trigger de total staké rebranché.
-- 2026-10-03 (2) — Prix résolus via `asset_prices_resolved` (USDC-ETH/POL n'avaient aucun prix côté dashboard) ; « Flux réels » via `admin_volume_daily` (l'ancien volume additionnait mises, gains, récompenses, frais et transactions échouées) ; lectures paginées (`fetchAll`, plafond PostgREST de 1000 lignes) ; frais analytics hors tests et `game_net_loss` ; `coingecko-price` : taux fiat automatiques (FCFA, CDF) et un prix invalide n'écrase plus le dernier bon prix.
-- 2026-10-03 (3) — Frais : ils n'étaient pas corrompus, plusieurs lecteurs SQL additionnaient les lignes de test et `game_net_loss`. Lecteurs corrigés (voir migration `fix_fee_readers_exclude_test_and_net_loss`), aucune ligne supprimée.
-- 2026-10-03 (4) — 449 lignes de test `trading_service` supprimées de `platform_fees` ; `get_admin_dashboard` réparée ; `take_admin_snapshot` réparée (échouait silencieusement chaque nuit).
-- 2026-10-03 (5) — Nouvelle page `/dashboard/fees` (onglet « Frais » dans Trésorerie) : total réel, 7/30 jours, par type, par actif, par mois ; exclut les lignes de test et `game_net_loss` ; logique dans `lib/fees.ts`.
-- 2026-10-03 (6) — `lib/wakati.ts` : tous les pools de staking WAKATI sont agrégés (total staké, stakers, récompenses) au lieu de lire un seul pool (`limit(1)`). `game_net_loss` conservé (utilisé par fn_score_credit_capacity).
-- 2026-10-04 — Page Utilisateurs : indicateurs globaux (total, actifs 7 j via transactions, nouveaux 7 j, email confirmé, dossiers KYC) au lieu de compteurs calculés sur la page affichée ; « Vérifiés » (toujours 0, KYC inutilisé) remplacé ; pastille KYC dans la fiche utilisateur. Vues `admin_treasury_dashboard` / `admin_transactions_overview` sur prix résolus.
-- 2026-10-05 — Nouvelle page `/dashboard/pnl` (« Résultat ») : compte de résultat par période (7/30/90 j/tout), séparation argent réel / WAKATI, mois par mois, signaux de décision (rendement joueur, staking, prix WAKATI, réserve), trésorerie actuelle ; logique dans `lib/pnl.ts`. « Marge des jeux » renommée « Mises encaissées (brut, jeux) » ; alerte de résultat négatif sur la Vue d'ensemble ; classes `.wk-ok` / `.wk-bad` ajoutées (elles n'existaient pas : les couleurs de la couverture ne s'appliquaient jamais).
-- 2026-10-05 (2) — Erreur corrigée : le trigger `trg_sync_pool_total` (migration du 2026-10-03) faisait double emploi avec `fn_stake`/`fn_unstake` et décalait le total du pool (+300) ; supprimé et total remis à la valeur exacte. Nouveaux écrans : `/dashboard/controls` (25 contrôles automatiques via `admin_run_controls()`, alerte sur la Vue d'ensemble), `/dashboard/pnl/depots` (entonnoir et causes d'échec des dépôts), `/dashboard/pnl/roue` (rendement théorique contre observé, test d'équité), `/dashboard/pnl/utilisateurs` (rentabilité par utilisateur, parrainage). Tâches planifiées mortes retirées ; vue matérialisée `admin_asset_dashboard` fermée à anon/authenticated.
-- 2026-10-07 — Journalisation des swaps : `execute_swap_realtime` écrit désormais `swap_in` / `swap_out` dans `treasury_ledger` (voir migration `20261007_swap_ledger_journaling.sql`) ; contrôles de trésorerie fiabilisés (continuité du journal, indépendante de l'ordre des écritures) ; nouveau contrôle de sécurité « fonctions utilisateur protégées contre l'usurpation » (20 fonctions ouvertes à la clé publique, à corriger) ; page Liquidité : libellés des nouveaux types d'écriture.
-- 2026-10-08 — Système de burn de la cagnotte jackpot (BROUILLON, non appliqué en base) : `supabase/migrations/20261008_jackpot_burn_system.sql` (fonction `fn_daily_jackpot_burn`, cron 00:20 UTC, s'appuie sur `fn_burn_tokens`, burns en `pending_onchain`) + page `/dashboard/wakati/burns` (suivi, confirmation on-chain par hash, burn manuel). À tester dans une transaction annulée avant application.
-- 2026-10-09 — Sécurité (préparation, rien d'appliqué en base) : `docs/SECURITE_FONCTIONS.md` (52 fonctions SECURITY DEFINER sans contrôle d'identité, classées par gravité), `supabase/scripts/verifier_exposition_fonctions.sql` (vérification en lecture seule), `supabase/migrations/20261009_security_hardening_DRAFT.sql` (plan en 3 étapes, brouillon non testé).
-- 2026-10-10 — Mise à jour intégrée (« tabwakati-maj-complet ») : règle de frais unifiée (hors test, hors `game_house_edge`, hors `game_net_loss` ; les mises des jeux restent dans le Résultat) dans `lib/fees.ts`, la page Frais et la fonction SQL `get_platform_fees_totals` ; couverture de Trésorerie et Liquidité via `computeCoverage` ; page Crédit via `admin_loans_dashboard.prets_a_risque` corrigée ; page Jeux : taux de sortie de la roue sur 30 jours glissants (migration `20261010_align_db_with_dashboard_rules.sql`, déjà appliquée et vérifiée). `lib/metrics/financial.ts` mis de côté dans `docs/en_attente/` (dépendances absentes).
-- 2026-10-10 (2) — Sécurité appliquée en base : gardes d'identité (`assert_caller_is`) sur 10 fonctions appelées par l'app, `fn_award_engagement_points` et `execute_wheel_spin` réservées au serveur ; edge function `spin-wheel` v37 (appel de la roue avec la clé serveur).
-- 2026-10-10 (3) — Burn WAKATI, règle du seuil : tant que le prix du WAKATI est sous `burn_settings.burn_start_price_fcfa` (1 FCFA), aucun burn et 100 % du bénéfice net va dans la caisse (`wakati_reserve_state`) ; à partir du seuil, `burn_share_pct` % (30 par défaut) du bénéfice net positif du jour est brûlé, le reste va dans la caisse ; jour de perte : pas de burn. Un seul bénéfice net par jour (`fn_compute_wakati_daily_price`, 00:10 UTC), enregistré dans `wakati_price_history.burn_allocation_usd` ; `fn_run_burn` (00:20 UTC) brûle ce qui n'est pas encore réglé (`burn_settled_at`) avec les garde-fous existants (1 % de la trésorerie par jour, minimum 1 WAKATI, report du reste). `fn_wakati_burn_status()` donne l'état ; `burn_rules` et `fn_burn_compute` ne sont plus utilisés. Page `/dashboard/wakati/burns` : prix en FCFA vs seuil, caisse, derniers passages, burns à confirmer on-chain. Migration `20261010_wakati_burn_threshold_single_pot.sql` (appliquée).
-- 2026-10-10 (4) — Réglages du burn dans le dashboard : `/dashboard/wakati/burns` > « Réglages » (seuil de prix en FCFA, part brûlée, plafonds en % de trésorerie et en WAKATI/jour, burn minimum, trésorerie à conserver, activation) et carte « Caisse et prix » (part versée à la caisse, variation max, prix plancher, calcul actif) ; validation côté serveur, contraintes CHECK en base, audit avant/après (`burn.settings.update`, `settings.wakati_reserve_state.update`). `wakati_price_history` : anon et authenticated ne lisent plus que `id, computed_for_date, price_before_usd, final_price_usd, created_at` (bénéfice net, réserve, offre et burn réservés au service_role) ; un `select *` sur cette table côté app échoue désormais, il faut lister les colonnes. Migration `20261010_wakati_history_privileges_and_settings_checks.sql` (appliquée).
-- 2026-10-10 (5) — Nouvelle page `/dashboard/wakati/offre` (onglet WAKATI > Offre, entrée ajoutée dans `lib/nav-config.ts`) : plafond de l'offre, émissions par source (staking, parrainage, gains aux jeux) sur 30 jours et en moyenne mensuelle sur 90 jours, mises qui reviennent, émission nette, tenue de la trésorerie, repère de budget (0,5 % de la trésorerie par mois, **affiché mais pas appliqué automatiquement**), état de la règle de burn, sensibilité du prix aux distributions, résumé factuel pour investisseur. Aucune création de WAKATI par la plateforme ; à vérifier sur PolygonScan : le contrat ne doit pas avoir de fonction `mint`, sinon l'offre n'est pas réellement plafonnée.
-- 2026-10-11 — Page Offre : le « plafond de l'offre » n'est plus lu sur la blockchain ; c'est un réglage de l'application (`burn_settings.supply_cap_wakati`, modifiable dans Burns > Réglages, audité comme les autres réglages du burn). Vide = automatique (WAKATI chez les utilisateurs + trésorerie interne). Valeur purement informative : elle ne crée ni ne bloque aucun jeton. Avertissement affiché si le plafond défini est inférieur à ce qui existe déjà dans l'app. La trésorerie de la page vient aussi uniquement de `treasury_wallets`. Migration `20261011_wakati_supply_cap_setting.sql` (**à appliquer avant le déploiement**).
-- 2026-10-13 — Solvabilité : la couverture reste calculée actif par actif, mais l'affichage est corrigé (bandeau orange « Presque tout est couvert » s'il reste un écart, même mineur ; « manque » identique sur Solvabilité, Liquidité et Vue d'ensemble). Calcul partagé dans `lib/solvency.ts` ; la Vue d'ensemble utilise désormais la custody réelle (on-chain + PawaPay) et non `treasury_wallets`.
-- 2026-10-13 (2) — WAKATI 100 % in-app : plus aucune lecture blockchain pour WAKATI (offre, trésorerie, burn, contrat, PolygonScan). Offre = soldes utilisateurs + stock interne (`treasury_wallets`). `getTokenTotalSupply` supprimée de `lib/chain.ts`.
-- 2026-10-13 (3) — Burn WAKATI 100 % comptable : plus de statut « à envoyer on-chain » ni de confirmation par hash. Migration `20261013_wakati_burn_in_app_only.sql` (appliquée) : `fn_run_burn` ne met plus la ligne en `pending_onchain` ; l'ancien statut reste lu comme un burn normal. Contrôle `burn_pending_onchain` masqué dans `lib/controls.ts`.
-- 2026-10-13 (4) — Sécurité : migration `20261013_revoke_rpc_execute_on_trigger_functions.sql` (appliquée) : EXECUTE retiré à anon/authenticated sur 4 fonctions de déclencheur (`handle_new_auth_user`, `handle_user_email_confirmed`, `fn_score_loan_debt_recovery_trigger`, `sync_new_asset_to_all_users`).
-- 2026-10-13 (5) — Phase 3C : nouvelle page `/dashboard/analytics/cohortes` (rétention par cohorte en carte de chaleur, churn mensuel et cumulé, valeur vie par cohorte, monétisation et concentration du revenu). Migration `20261013_cohorts_churn_ltv.sql` (appliquée) : fonctions `admin_cohort_retention`, `admin_cohort_ltv`, `admin_monthly_churn`, `admin_churn_summary`, `admin_monetization_summary`, `admin_activity_types` (service_role uniquement, lecture seule). « Actif » = opération terminée initiée par l'utilisateur (dépôt, retrait, swap, jeu, staking, prêt, achat WAKATI) ; récompenses, bonus, gains et frais ne comptent pas. Revenu = frais réels (hors tests, `game_net_loss`, `game_house_edge`) au cours actuel. Limite connue : les frais ne sont enregistrés qu'à partir du 2026-07-28, donc la valeur vie des cohortes plus anciennes est partielle.
-- 2026-10-13 (6) — Phase 4 : (a) le Résultat valorise désormais chaque flux au PRIX DU JOUR pour tous les actifs (asset_prices_history via `admin_daily_prices`, WAKATI via wakati_price_history), cours actuel seulement faute d'historique, avec la part concernée affichée ; les pages Rentabilité, Roue et Dépôts en profitent aussi. (b) Nouvelle page `/dashboard/pnl/acquisition` : coût d'acquisition (bonus de parrainage versés au filleul et au parrain, rattachés à l'utilisateur acquis via metadata), parrainés contre inscrits directs, résultat par mois d'inscription, parrains (alerte si inscriptions en série), valorisation du coût au prix du jour / actuel / pic. Migration `20261013_phase4_valuation_acquisition.sql` (appliquée) : `admin_daily_prices`, `admin_user_value` (service_role uniquement). Limites : dépenses externes (publicité) absentes de la base ; prix du WAKATI connu seulement depuis le 2026-09-04 ; 16 anciens bonus de parrain sans filleul identifié (inclus dans le coût total, absents du détail par mois).
-- 2026-10-13 (7) — Contrôle de version de l'app mobile (APK hors Play Store) : table `app_versions` (migration `20261013_app_versions.sql`, appliquée ; lecture publique, écriture réservée au dashboard), page `/dashboard/app` (onglet Administration > App mobile) pour publier build, build minimum obligatoire, lien APK, empreinte SHA-256 et notes (garde-fous : confirmation avant de bloquer des versions ou de revenir en arrière, lien 404 refusé, action tracée dans le journal d'audit). Code Flutter prêt à copier : `docs/flutter/update_checker.dart`.
+- [ ] Créer un compte nominatif par administrateur, puis `ADMIN_LEGACY_LOGIN=off`
+- [ ] Permissions **par page et par route API** (matrice rôle × page) : masquer les entrées de menu non permises, exiger `finance.read` pour les exports financiers
+- [ ] Limitation de tentatives de connexion par IP (en plus du verrouillage par compte)
+- [ ] Sessions révocables (table `admin_sessions`, « se déconnecter partout », jeton court) au lieu d'un jeton de 12 h sans état
+- [ ] Authentification à deux facteurs (TOTP), obligatoire pour les rôles finance et super-admin
+- [ ] **Motif obligatoire** et **double validation** (quatre yeux) au-dessus d'un seuil : collecte réelle, fermeture forcée des futures, burn, changement des frais, retrait manuel
+- [ ] Journal d'audit infalsifiable (écriture seule, chaînage par empreinte)
+- [ ] Restriction par IP / VPN pour l'accès à la console (option)
 
-- 2026-11-09 — Trading futures (marge isolée, long / short, levier) : nouvel onglet **Produits › Futures** (`app/dashboard/futures`, `lib/futures.ts`). Suivi (exposition long/short, positions ouvertes triées par distance à la liquidation, résultat de la plateforme par période et par jour, traders, répartition par levier), santé du moteur (surveillance pg_cron `futures-settle`, fraîcheur du prix, rapprochement du ledger), contrôle (interrupteur, fermeture forcée d'une position, fermeture de toutes les positions avec confirmation « FERMER ») et réglages complets de `futures_config` avec validation (levier max ↔ marge de maintenance, frais, plafonds `max_notional_per_user` / `max_total_notional`, 0 = illimité). Toutes les actions sont inscrites dans le journal d'audit (`futures.*`). Alertes futures dans « À traiter » de l'accueil et section Futures dans la fiche utilisateur.
-- 2026-11-09 (2) — **Comptabilité futures** : le Résultat n'intègre plus les mouvements de marge (`game_bet`/`game_win` avec `metadata.game = 'futures'`) : une marge immobilisée n'est pas une mise encaissée. Il intègre le résultat RÉALISÉ des positions clôturées (`-realized_pnl`, net de tous les frais, à la date de clôture), une seule fois. (Mis à jour le 2026-11-10, voir l'entrée suivante : seul `futures_settlement` est exclu des frais ; les trois vrais frais futures comptent comme frais.) `pnl.ts` et `user-profit.ts` utilisent désormais la constante au lieu d'une chaîne recopiée.
-- 2026-11-09 (3) — Incident évité de justesse : la première migration admin (`futures_admin`) avait écrasé `fn_fut_open` (perdant la conservation de l'offre, les plafonds et l'arrondi à 8 décimales), `admin_futures_overview` et `admin_futures_force_close`, appliquées entre-temps par une autre migration. Aucune position n'avait été ouverte dans l'intervalle ; fonctions restaurées à l'identique (`futures_restore_functions_after_admin_overwrite`). **Règle** : avant tout `create or replace function`, lire la définition en production (`pg_get_functiondef`) et la liste des migrations ; ne jamais redéfinir une fonction d'une autre migration. La migration `20261108_futures_admin.sql` du dépôt est désormais purement additive (vues `admin_futures_*`, `admin_futures_summary`, `admin_futures_health`).
+**Terminé quand** : un compte « support » ne peut ni voir la trésorerie ni exporter ; une action sensible exige un motif et une seconde personne ; le journal d'audit ne peut plus être modifié.
 
-- 2026-11-10 — **Frais futures correctement étiquetés + résultat de la plateforme en chiffres.** La trésorerie recevait / payait un montant NET à la clôture (frais périodiques, frais de fermeture et gain/perte mélangés) : seuls les frais d'ouverture avaient une ligne. Désormais chaque clôture est ventilée (`fn_fut_book_settlement`) : `futures_funding_fee` (périodiques), `futures_close_fee` (fermeture), et le PNL de trading seul : `futures_settlement` (perte des joueurs, trésorerie reçoit) ou « Gain futures … » (gain des joueurs, trésorerie paie). Total trésorerie inchangé ; historique rattrapé sans effet sur le solde (migration `20261110_futures_fee_labeling.sql`, patch appliqué côté serveur dans `fn_fut_close_row` et `fn_fut_close_partial` sans les recopier). **Règle comptable** : `futures_open_fee`, `futures_funding_fee`, `futures_close_fee` = vrais frais (page Frais, catégorie « Frais » du Résultat) ; `futures_settlement` = PNL de trading, exclu des frais (`EXCLUDED_FEE_TYPES`) et compté dans le Résultat via les positions clôturées (marge − somme versée − frais périodiques − frais de fermeture), une seule fois. **Dashboard** : bloc « résultat de la plateforme » en tête de Produits › Futures et sur l'accueil : par période (aujourd'hui, 7 j, 30 j, total) frais encaissés (ouverture / périodiques / fermeture), PNL de trading et résultat net, avec « L'APP GAGNE / L'APP PERD » et l'équivalent en $, plus l'en-cours (frais périodiques accumulés, PNL latent, marge immobilisée). Fonctions SQL `admin_futures_money`, `admin_futures_money_period`, `admin_futures_money_daily` (migration `20261110_futures_admin_money.sql`) ; vérification : frais du dashboard = somme de `platform_fees` ; net + frais d'ouverture des positions ouvertes = − Σ realized_pnl.
-## 🧮 Plafond d'émission WAKATI, configurable en base (2026-10-11)
-- Tables `emission_settings` (réglages, ligne id = 1) et `emission_log` (journal) ; fonctions `fn_emission_status()` et `fn_emission_allow(source, montant)` (service_role uniquement). Migration `20261011_emission_budget.sql` (appliquée).
-- Budget = trésorerie WAKATI × `budget_pct_per_month` % × `window_days` / 30. Consommation = staking et parrainage journalisés + émission nette des jeux (gains - mises, comptée mais jamais bloquée).
-- Staking : `distribute_staking_rewards` (00:05 UTC) applique un facteur <= 1 si le budget ne suffit pas. Parrainage : `complete_user_profile` saute les deux bonus si le budget est épuisé (inscription et lien de parrainage inchangés) ; montants lus dans `referral_bonus_referred` / `referral_bonus_referrer` (300 / 200 par défaut). Toute erreur du plafond laisse le paiement passer.
-- Tous les réglages (budget, fenêtre, mode appliqué ou surveillance seule, activation, bonus, pas de sensibilité du prix, fenêtre de tenue de trésorerie) se modifient dans WAKATI > Offre, avec journal d'audit.
-- Ne pas confondre : `burn_settings.supply_cap_wakati` (Burns > Réglages) est le plafond d'OFFRE affiché, purement informatif ; le plafond d'ÉMISSION ci-dessus agit sur les paiements.
-- `lib/metrics/financial.ts` : défauts recouvrés soustraits, pic WAKATI sur 31 jours. Le fichier périmé `docs/en_attente/financial.ts.txt` a été supprimé le 2026-10-13.
-- La colonne `burn_settings.supply_cap_wakati` manquait en base alors que le code la lisait : migration `20261011_wakati_supply_cap_setting.sql` appliquée le 2026-10-11.
-- 2026-10-25 — Réorganisation de la navigation : 8 → 6 entrées (Aujourd'hui, Argent, Utilisateurs, Produits, WAKATI, Système). Les URLs ne changent pas ; seul le rattachement aux onglets change (`lib/nav-config.ts`, onglets déduits de l'URL par `resolveNav`). La page d'accueil devient « Aujourd'hui » : un statut, la liste « À traiter » avec lien vers chaque page, 4 chiffres clés. Page Crédit refaite pour les prêts sur staking (migration `20261025_admin_credit_views_stake_loans.sql`, appliquée).
-- 2026-10-25 — Réglages déplacés à côté du suivi de chaque produit : Prêts (nouveaux réglages : règles des prêts sur staking, garantie WAKATI, taux par actif emprunté, score), Staking (plans), Jeux (roue, prédictions), WAKATI > Prix (calcul du prix). La page Paramètres ne garde que pays et mobile money, Campay et actifs. Les formulaires envoient `return_to` : l'enregistrement revient sur la page d'origine (`backTo` dans `settings/actions.ts`). Champs partagés dans `components/settings-form.tsx`.
-- 2026-10-28 — Achat de WAKATI sécurisé : `buy_wakati_with_asset` calcule maintenant le taux (prix actif / prix WAKATI), les frais (0,5 %) et le WAKATI crédité côté base ; la quantité envoyée par l'app sert seulement à détecter un prix périmé (écart > 2 % => PRICE_CHANGED). Signature inchangée. Migration `20261028_buy_wakati_server_side_price.sql` (appliquée). Nouvelle page WAKATI > « Ventes & caisse » (argent encaissé par actif et par utilisateur, frais, contenu de la caisse).
-- 2026-10-29 — Manque de liquidité suivi pour TOUS les actifs, WAKATI sans traitement à part : la réserve d'un actif est ce que l'app en possède (`treasury_wallets`, en unités et en USD via la vue `asset_reserves`). Un swap dont l'actif versé dépasse sa réserve est refusé (rien n'est débité) avec le message « Manque de liquidité en X … » ; l'incident est écrit dans `asset_liquidity_events` et l'actif est marqué dans `asset_liquidity_state` (drapeau levé aussi quand la réserve tombe à 0, retiré dès qu'elle remonte). `execute_swap_realtime` devient une enveloppe autour de `_execute_swap_realtime_core` (voir `20261029_asset_liquidity_tracking.sql`) ; l'achat de WAKATI (`buy_wakati_with_asset`) applique le même suivi (`20261030_buy_wakati_liquidity_tracking.sql`, code d'erreur `INSUFFICIENT_LIQUIDITY`). Alertes et liste des refus sur `/dashboard/liquidity`.
-- 2026-10-31 — Réserve de retrait (`/dashboard/custody`, onglet Argent) : pour chaque actif, combien garder dans le portefeuille de retrait = le plus grand de (plancher choisi, plus gros solde d'un utilisateur, N jours du pire jour de retraits sur 90 j), sans dépasser le dû ; le stock des swaps est mis de côté avant de compter (les swaps paient depuis le même portefeuille). Jauge, alertes « à remplir » / « danger » / « trop plein » (aussi sur l'accueil), argent libre et part qui peut travailler (réglable, 0 % par défaut), relevé quotidien automatique (`custody_snapshots`) et export mensuel CSV (`/api/custody/export?month=AAAA-MM`, empreinte SHA-256 dans l'en-tête `X-Content-SHA256`). Coffre optionnel : variables `VAULT_EVM_ADDRESS` / `VAULT_BTC_ADDRESS` (son contenu compte comme argent détenu). Migration `20261031_custody_policy.sql` (tables `custody_policy`, `custody_snapshots`, fonction `get_withdrawal_stats`, réservée au service_role). Le dashboard ne déplace aucun argent : il calcule et alerte.
+### Phase 3 : fiabilité des chiffres et performance
+
+Objectif : chaque chiffre est exact, frais et vérifiable ; les pages restent rapides quand la base grossit.
+
+- [ ] Déplacer les agrégations lourdes dans la base (vues ou fonctions `admin_*`) : aujourd'hui `fetchAll` ramène jusqu'à 200 000 lignes en mémoire (Résultat, Frais, rentabilité par utilisateur)
+- [ ] Cache court (60 s) sur les pages lourdes et sur les prix
+- [ ] Fraîcheur affichée sur chaque bloc ; mini-courbes sur 30 jours à l'accueil
+- [ ] Capteur d'écart par actif (soldes contre mouvements), alerte au-delà d'un seuil
+- [ ] Types générés par Supabase (`supabase gen types`) pour supprimer les ~200 `any`
+- [ ] Découper les pages de plus de 300 lignes sur le modèle de `modules/products/credit.ts` : Liquidité (489), Réserve de retrait (445), fiche utilisateur (414), Futures (400), Couverture (350), `settings/actions.ts` (543)
+- [ ] Remplacer les styles en ligne (~220) par des classes CSS
+- [ ] Étendre les tests : Résultat, Frais, Couverture, Cohortes, Décision utilisateur
+
+**Terminé quand** : aucune page ne lit plus de 1 000 lignes pour afficher un total ; toutes les pages sont sous 300 lignes ; la couverture de tests inclut tous les calculs d'argent.
+
+### Phase 4 : conformité et opérations (modules d'un exchange)
+
+Objectif : traiter les dossiers à risque dans la console, pas dans des tableurs.
+
+- [ ] **KYC / AML** : file de vérification (pièces, statut, motif de rejet), niveaux de vérification et plafonds associés, filtrage sanctions / PPE via un prestataire (Sumsub, Chainalysis ou Elliptic)
+- [ ] **Retraits** : file de validation (automatique sous un seuil, manuelle au-dessus, double approbation)
+- [ ] **Surveillance** : règles de détection (fractionnement de montants, retraits atypiques, comptes liés par parrainage ou appareil), dossiers de cas avec historique
+- [ ] **Gel et limites** par utilisateur depuis la fiche (les permissions `users.freeze` / `users.limits` existent déjà)
+- [ ] **Support** : notes, tickets, consultation de la fiche en lecture seule
+- [ ] Rapports réglementaires et exports signés (comme l'export mensuel de la réserve, avec empreinte SHA-256)
+- [ ] Preuve de réserves publiable (à partir des relevés quotidiens existants)
+
+**Terminé quand** : un retrait ou un compte à risque se traite de bout en bout dans la console, avec trace.
+
+### Phase 5 : produits et croissance
+
+- [ ] Vue **par produit rapportée à l'utilisateur actif** (ce que chaque produit rapporte ou coûte par utilisateur)
+- [ ] Décision utilisateurs : gros retraits probables et comportements inhabituels
+- [ ] **Listing d'actifs** : ajouter un actif ou un réseau, activer / suspendre dépôts et retraits par réseau, depuis la console
+- [ ] Marketing : codes promo, campagnes, airdrops (le parrainage existe déjà)
+- [ ] Alertes sortantes (e-mail, WhatsApp ou Slack **privés**, jamais le bot Telegram public) avec seuils réglables
+
+### Phase 6 : plateforme et durée
+
+- [ ] Next.js 14 → version courante et React 19, une fois la CI en place
+- [ ] Recherche globale (utilisateur, hash de transaction, adresse)
+- [ ] Groupes de routes par section (`(tresorerie)`, `(utilisateurs)`…) pour que l'arborescence suive le menu
+- [ ] Supervision : Sentry, suivi des tâches planifiées, alerte si une tâche ne s'est pas exécutée
+- [ ] Glossaire appliqué sur toutes les pages (voir [CONVENTIONS](docs/CONVENTIONS.md#6-interface)) ; interface bilingue FR / EN
+
+---
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) : structure, dépendances, sécurité, recette « ajouter une page », ancien → nouveau chemin
+- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) : règles sur les actifs, la comptabilité, le SQL et l'interface
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) : journal de tout ce qui a changé et pourquoi
+- [docs/SECURITE_FONCTIONS.md](docs/SECURITE_FONCTIONS.md) : audit des fonctions SQL `SECURITY DEFINER`
+- [docs/archive/](docs/archive/) : ancienne roadmap fonctionnelle
