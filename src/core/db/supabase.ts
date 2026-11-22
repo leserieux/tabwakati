@@ -1,6 +1,9 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-type AdminClient = ReturnType<typeof createClient>;
+// `any` volontaire : pas de types générés pour l'instant (voir roadmap, phase 3). Même typage que l'ancien `createClient(url, key)` sans générique.
+// (Ne pas utiliser ReturnType<typeof createClient> : TypeScript en déduit des colonnes `unknown` et le build échoue.)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AdminClient = SupabaseClient<any, "public", any>;
 let cached: { id: string; client: AdminClient } | null = null;
 
 /**
