@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -10,6 +11,7 @@ const back = (kind: "saved" | "error", msg: string): never => redirect(`${PATH}?
 
 /** Lance tout de suite le passage de burn (le même que la tâche quotidienne de 00:20 UTC). Sous le seuil de prix, il ne brûle rien. */
 export async function burnNow() {
+  assertCanWrite();
   const db = getSupabaseAdmin();
   const { data, error } = await db.rpc("fn_run_burn", { p_force: false });
   const res = data as { success?: boolean; status?: string; wakati_burned?: number; note?: string } | null;
@@ -68,6 +70,7 @@ async function saveSettings(opts: {
 
 /** Réglages du burn : seuil de prix, part brûlée, plafonds. Appliqués dès le prochain passage (00:20 UTC). */
 export async function updateBurnSettings(formData: FormData) {
+  assertCanWrite();
   const errors: string[] = [];
   const patch = {
     enabled: formData.get("enabled") === "on",
@@ -86,6 +89,7 @@ export async function updateBurnSettings(formData: FormData) {
 
 /** Réglages de la caisse et du calcul du prix (mêmes champs que Réglages > Prix WAKATI). */
 export async function updateReserveSettings(formData: FormData) {
+  assertCanWrite();
   const errors: string[] = [];
   const patch = {
     profit_share_pct: readNum(formData, "profit_share_pct", "Part versée à la caisse (%)", { min: 0, max: 100 }, errors),

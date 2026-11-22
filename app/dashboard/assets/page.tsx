@@ -3,8 +3,9 @@ import { computeCoverage } from "@/lib/valuation";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { loadStakingPlanData } from "@/lib/staking-plan-data";
 import { loadFunding } from "@/lib/funding";
+import { loadLastKnown, lastKnownText, ageLabel } from "@/lib/last-known";
 import { RunwayCell } from "@/components/funding-view";
-import { statusLabel, statusTone, lineGap, lineRatio, lineUsd } from "@/lib/asset-view";
+import { statusLabel, statusTone, lineGap, lineRatio, lineUsd, lineReadNote } from "@/lib/asset-view";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote } from "@/components/ui";
 
@@ -19,6 +20,8 @@ export default async function AssetsPage() {
   const prices = await loadPrices();
   const [{ crypto, mobile, error }, staking] = await Promise.all([loadSolvencyLines(prices), loadStakingPlanData()]);
   const lines = [...crypto, ...mobile];
+  const lastKnown = await loadLastKnown(lines);
+  const readAt = lines.map((l) => l.readAt).filter((t): t is number => typeof t === "number");
   const fundingBy = new Map((await loadFunding({ crypto, mobile })).lines.map((f) => [f.plan.asset, f]));
 
   const cov = computeCoverage(lines.filter((l) => l.have !== null).map((l) => ({ asset: l.asset, owed: l.owe, held: l.have as number, price: l.priceUsd })));
@@ -32,7 +35,7 @@ export default async function AssetsPage() {
 
   return (
     <div>
-      <PageHeader title="Actifs" subtitle="Pour chaque actif : ce que tu dois aux utilisateurs, ce que tu détiens vraiment, et l'écart. Clique sur un actif pour voir tout ce qui le concerne." updatedAt={formatDateTime(new Date())} />
+      <PageHeader title="Actifs" subtitle="Pour chaque actif : ce que tu dois aux utilisateurs, ce que tu détiens vraiment, et l'écart. Clique sur un actif pour voir tout ce qui le concerne." updatedAt={readAt.length ? `soldes lus ${ageLabel(Math.min(...readAt))}` : formatDateTime(new Date())} />
       <ErrorNote text={error ? `Le calcul n'a pas pu être fait : ${error}` : null} />
 
       <div className="wk-exchange-kpis" style={{ marginBottom: 20 }}>
@@ -55,12 +58,12 @@ export default async function AssetsPage() {
                     <Td label="Actif"><a className="wk-link" href={`/dashboard/assets/${encodeURIComponent(l.asset)}`}>{l.asset}</a><div className="wk-asset-sub">{l.label}</div></Td>
                     <Td right hideSm label="Prix">{l.priceUsd === null ? "non valorisé" : formatUsd(l.priceUsd)}</Td>
                     <Td right label="Dû">{formatNumber(l.owe)}{lineUsd(l, l.owe) !== null && <div className="wk-asset-sub">{formatUsd(lineUsd(l, l.owe) as number)}</div>}</Td>
-                    <Td right label="Détenu">{l.have === null ? "illisible" : formatNumber(l.have)}{lineUsd(l, l.have) !== null && <div className="wk-asset-sub">{formatUsd(lineUsd(l, l.have) as number)}</div>}</Td>
+                    <Td right label="Détenu">{l.have === null ? (l.partialHave !== undefined ? `≥ ${formatNumber(l.partialHave)}` : "illisible") : formatNumber(l.have)}{lineUsd(l, l.have) !== null && <div className="wk-asset-sub">{formatUsd(lineUsd(l, l.have) as number)}</div>}</Td>
                     <Td right label="Écart"><span className={gap === null ? "" : gap < -1e-8 ? "wk-bad" : "wk-ok"}>{gap === null ? "—" : `${gap > 0 ? "+" : ""}${formatNumber(gap)}`}</span></Td>
-                    <Td hideSm label="Couverture"><CoverageBar ratio={lineRatio(l)} tone={statusTone(l.status)} /></Td>
+                    <Td hideSm label="Couverture">{l.have === null ? <span className="wk-asset-sub">illisible</span> : <CoverageBar ratio={lineRatio(l)} tone={statusTone(l.status)} />}</Td>
                     <Td right hideSm label="Staké">{stakedQty === undefined ? "—" : formatNumber(stakedQty)}</Td>
                     <Td hideSm label="Autonomie"><RunwayCell days={fundingBy.get(l.asset)?.runwayPeak ?? null} empty="—" /></Td>
-                    <Td label="Statut"><Pill tone={statusTone(l.status)}>{statusLabel(l.status)}</Pill></Td>
+                    <Td label="Statut"><Pill tone={statusTone(l.status)}>{statusLabel(l.status)}</Pill>{lineReadNote(l) && <div className="wk-asset-sub" style={{ maxWidth: 360, whiteSpace: "normal" }}>{lineReadNote(l)}{lastKnownText(l, lastKnown.get(l.label)) ? ` ${lastKnownText(l, lastKnown.get(l.label))}` : ""}</div>}</Td>
                   </tr>
                 );
               })}

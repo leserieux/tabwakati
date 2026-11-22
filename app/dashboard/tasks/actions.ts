@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -19,6 +20,7 @@ async function afterAction(action: string, summary: string, target: string, erro
 }
 
 export async function addTask(formData: FormData) {
+  assertCanWrite();
   const title = str(formData, "title");
   const row = {
     title,
@@ -32,6 +34,7 @@ export async function addTask(formData: FormData) {
 }
 
 export async function updateTaskStatus(formData: FormData) {
+  assertCanWrite();
   const id = str(formData, "id");
   const title = str(formData, "title") || id;
   const status = str(formData, "status");
@@ -40,6 +43,7 @@ export async function updateTaskStatus(formData: FormData) {
 }
 
 export async function deleteTask(formData: FormData) {
+  assertCanWrite();
   const id = str(formData, "id");
   const title = str(formData, "title") || id;
   const { error } = await getSupabaseAdmin().from("admin_tasks").delete().eq("id", id);
@@ -47,6 +51,7 @@ export async function deleteTask(formData: FormData) {
 }
 
 export async function createTaskFromSuggestion(formData: FormData) {
+  assertCanWrite();
   const title = str(formData, "title");
   const description = str(formData, "description");
   const category = str(formData, "category") || "autre";

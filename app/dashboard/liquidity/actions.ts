@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -12,6 +13,7 @@ function fail(asset: string, msg: string): never {
 }
 
 export async function adjustLiquidity(formData: FormData) {
+  assertCanWrite();
   const asset = String(formData.get("asset_symbol") || "").trim();
   const direction = String(formData.get("direction") || "").trim();
   const amount = Number(formData.get("amount"));

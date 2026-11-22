@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -23,6 +24,7 @@ function readNum(fd: FormData, key: string, label: string, opts: NumOpts, errors
 
 /** Réglages du plafond d'émission : validés ici et par les contraintes de la table, journalisés avant / après. */
 export async function updateEmissionSettings(formData: FormData) {
+  assertCanWrite();
   const errors: string[] = [];
   const checked = (k: string) => formData.get(k) === "on";
   const patch = {

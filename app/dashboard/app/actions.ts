@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -25,6 +26,7 @@ async function linkIsDead(url: string): Promise<boolean> {
 
 /** Publie (ou met à jour) la version Android que l'app propose à ses utilisateurs. */
 export async function publishAppVersion(fd: FormData) {
+  assertCanWrite();
   const latest = int(fd, "latest_build");
   const min = int(fd, "min_build");
   const name = str(fd, "latest_name") || null;

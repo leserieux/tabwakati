@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin, loadPrices } from "@/lib/data";
@@ -20,6 +21,7 @@ function num(formData: FormData, key: string): number {
 
 /** Enregistre les réglages d'un actif. Mêmes limites que les contraintes de la base. */
 export async function savePolicy(formData: FormData) {
+  assertCanWrite();
   const asset = String(formData.get("asset_symbol") || "").trim();
   if (!asset) fail(asset, "Actif manquant.");
 
@@ -66,6 +68,7 @@ export async function savePolicy(formData: FormData) {
 
 /** Enregistre le relevé du jour tout de suite (il est aussi pris automatiquement une fois par jour). */
 export async function takeSnapshot() {
+  assertCanWrite();
   const prices = await loadPrices();
   const sol = await loadSolvencyLines(prices);
   if (sol.error) fail("relevé", sol.error);

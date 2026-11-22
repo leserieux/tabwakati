@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -17,6 +18,7 @@ function back(kind: "saved" | "error", msg: string): never {
 
 /** Active ou coupe l'envoi de push pour un type de notification (table push_notification_types). N'efface rien : la notification dans l'app reste créée. */
 export async function setPushType(fd: FormData) {
+  assertCanWrite();
   const type = str(fd, "type");
   const enabled = str(fd, "enabled") === "1";
   const db = getSupabaseAdmin();
@@ -65,6 +67,7 @@ async function resolveUsers(raw: string): Promise<{ ids: string[]; unknown: stri
  * Par défaut le message est aussi déposé dans la boîte de notifications de l'app (type admin_message).
  */
 export async function sendBroadcast(fd: FormData) {
+  assertCanWrite();
   const title = str(fd, "title");
   const body = str(fd, "body");
   const audience = str(fd, "audience") === "all" ? "all" : "users";

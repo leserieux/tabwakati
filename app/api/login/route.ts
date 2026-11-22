@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkPassword, createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
+import { identifyRole, createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -11,13 +11,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Indique ton prénom (au moins 2 caractères)." }, { status: 400 });
     }
 
-    if (typeof password !== "string" || !checkPassword(password)) {
+    const role = typeof password === "string" ? identifyRole(password) : null;
+    if (!role) {
       // Léger délai pour limiter le bruteforce naïf
       await new Promise((r) => setTimeout(r, 400));
       return NextResponse.json({ error: "Mot de passe incorrect" }, { status: 401 });
     }
 
-    const token = createSessionToken(name);
+    const token = createSessionToken(name, role);
     const res = NextResponse.json({ ok: true });
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,

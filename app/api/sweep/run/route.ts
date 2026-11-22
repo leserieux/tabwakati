@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
+import { getSessionRole, SESSION_COOKIE_NAME } from "@/lib/auth";
 import { logAdminAction } from "@/lib/audit";
 
 // Cette route n'est pas sous /dashboard : le middleware ne la protège pas, on vérifie la session ici.
@@ -22,12 +22,16 @@ type SweepResult = {
 
 export async function POST(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  if (!verifySessionToken(token)) {
+  const role = getSessionRole(token);
+  if (!role) {
     return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
   }
 
   const body = await req.json().catch(() => ({}));
   const dryRun = body.dryRun !== false; // dry-run par défaut, comme la fonction edge elle-même
+  if (!dryRun && role !== "admin") {
+    return NextResponse.json({ error: "Compte en lecture seule : la collecte réelle est réservée aux administrateurs." }, { status: 403 });
+  }
   const network: string | undefined = body.network || undefined;
   const userAddressId: string | undefined = body.userAddressId || undefined;
 

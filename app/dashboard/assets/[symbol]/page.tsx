@@ -1,9 +1,10 @@
 import { getSupabaseAdmin, loadPrices, q } from "@/lib/data";
 import { loadSolvencyLines } from "@/lib/solvency";
 import { loadStakingPlanData } from "@/lib/staking-plan-data";
+import { loadLastKnown, lastKnownText } from "@/lib/last-known";
 import { loadFunding, actionText, URGENCY_LABEL, URGENCY_TONE } from "@/lib/funding";
 import { RunwayCell, StressRows } from "@/components/funding-view";
-import { statusLabel, statusTone, lineGap, lineRatio, lineUsd, isMobileLine } from "@/lib/asset-view";
+import { statusLabel, statusTone, lineGap, lineRatio, lineUsd, isMobileLine, lineReadNote } from "@/lib/asset-view";
 import { txTypeLabel, txStatusTone, txStatusLabel } from "@/lib/transactions";
 import { formatNumber, formatUsd, formatPct, formatDateTime, formatDate, shortId } from "@/lib/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote } from "@/components/ui";
@@ -38,6 +39,7 @@ export default async function AssetPage({ params }: { params: { symbol: string }
     );
   }
 
+  const lastKnownText_ = lastKnownText(line, (await loadLastKnown([line])).get(line.label));
   const funding = (await loadFunding({ crypto, mobile })).lines.find((f) => f.plan.asset === line.asset);
   const db = getSupabaseAdmin();
   const txs = await q<TxRow>(db.from("transactions").select("id, user_id, type, amount, status, created_at").eq("asset_symbol", line.asset).order("created_at", { ascending: false }).limit(15));
@@ -58,12 +60,12 @@ export default async function AssetPage({ params }: { params: { symbol: string }
     <div>
       <PageHeader title={line.asset} subtitle={`${line.label} · fiche actif`} updatedAt={formatDateTime(new Date())} />
       <p style={{ margin: "-6px 0 16px" }}><a className="wk-link" href="/dashboard/assets">← Tous les actifs</a></p>
-      <ErrorNote text={line.error ? `Lecture incomplète : ${line.error}` : null} />
+      <ErrorNote text={lineReadNote(line) ? `Lecture incomplète : ${lineReadNote(line)}${lastKnownText_ ? ` ${lastKnownText_}` : ""}` : line.error ? `Lecture incomplète : ${line.error}` : null} />
 
       <div className="wk-exchange-kpis">
         <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Prix</span><span className="wk-exchange-kpi-value">{line.priceUsd === null ? "non valorisé" : formatUsd(line.priceUsd)}</span><span className="wk-exchange-kpi-detail">{line.priceUsd === null ? "aucun prix valide : totaux en dollars exclus" : "prix du jour"}</span></div>
         <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Dû aux utilisateurs</span><span className="wk-exchange-kpi-value">{formatNumber(line.owe)}</span><span className="wk-exchange-kpi-detail">{lineUsd(line, line.owe) === null ? "" : formatUsd(lineUsd(line, line.owe) as number)}</span></div>
-        <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Détenu</span><span className="wk-exchange-kpi-value">{line.have === null ? "illisible" : formatNumber(line.have)}</span><span className="wk-exchange-kpi-detail">{lineUsd(line, line.have) === null ? "" : formatUsd(lineUsd(line, line.have) as number)}</span></div>
+        <div className="wk-exchange-kpi"><span className="wk-exchange-kpi-label">Détenu</span><span className="wk-exchange-kpi-value">{line.have === null ? (line.partialHave !== undefined ? `≥ ${formatNumber(line.partialHave)}` : "illisible") : formatNumber(line.have)}</span><span className="wk-exchange-kpi-detail">{lineUsd(line, line.have) === null ? "" : formatUsd(lineUsd(line, line.have) as number)}</span></div>
         <div className={`wk-exchange-kpi ${gap === null ? "" : gap < -1e-8 ? "wk-exchange-kpi-negative" : "wk-exchange-kpi-positive"}`}><span className="wk-exchange-kpi-label">Écart</span><span className="wk-exchange-kpi-value">{gap === null ? "—" : `${gap > 0 ? "+" : ""}${formatNumber(gap)}`}</span><span className="wk-exchange-kpi-detail"><Pill tone={tone}>{statusLabel(line.status)}</Pill></span></div>
       </div>
 
@@ -79,7 +81,7 @@ export default async function AssetPage({ params }: { params: { symbol: string }
             {funding.action.kind !== "none" && <p style={{ margin: "0 0 14px" }}><strong>À faire : </strong>{actionText(funding)}</p>}
             {funding.stress.length === 0 ? <Empty text="Aucun solde utilisateur à tester." /> : (
               <TableWrap>
-                <thead><tr><Th>Cas</Th><Th right>À payer</Th><Th>Résultat</Th></tr></thead>
+                <thead><tr><Th>Cas</Th><Th right>À payer</Th><Th right>Part du dû</Th><Th>Résultat</Th></tr></thead>
                 <tbody><StressRows f={funding} /></tbody>
               </TableWrap>
             )}
@@ -91,7 +93,7 @@ export default async function AssetPage({ params }: { params: { symbol: string }
       <div className="wk-grid-2" style={{ marginTop: 20 }}>
         <Section title="Où se trouve l'argent" hint={line.note}>
           <div className="wk-panel">
-            <div style={{ marginBottom: 14 }}><CoverageBar ratio={lineRatio(line)} tone={tone} /></div>
+            {line.have !== null && <div style={{ marginBottom: 14 }}><CoverageBar ratio={lineRatio(line)} tone={tone} /></div>}
             {where.length === 0 && !line.details ? <Empty text="Aucune répartition disponible." /> : (
               <div className="wk-kv">
                 {where.map((w) => <div className="wk-kv-row" key={w.label}><span>{w.label}</span><span>{formatNumber(w.value)}</span></div>)}

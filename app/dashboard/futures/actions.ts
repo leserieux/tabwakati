@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -84,6 +85,7 @@ function parsePresets(raw: string): number[] {
 }
 
 export async function updateFuturesConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     is_active: bool(formData, "is_active"),
     margin_default: num(formData, "margin_default"),
@@ -126,6 +128,7 @@ export async function updateFuturesConfig(formData: FormData) {
 
 /** Interrupteur : bloque (ou rouvre) l'ouverture de nouvelles positions. Les positions existantes restent surveillées et fermables. */
 export async function setFuturesActive(formData: FormData) {
+  assertCanWrite();
   const active = str(formData, "active") === "1";
   const db = getSupabaseAdmin();
   const { data: before } = await db.from("futures_config").select("is_active").eq("id", 1).maybeSingle();
@@ -143,6 +146,7 @@ export async function setFuturesActive(formData: FormData) {
 
 /** Ferme une position au prix du marché (même verrou et mêmes règles que l'app : jamais de double fermeture). */
 export async function forceClosePosition(formData: FormData) {
+  assertCanWrite();
   const id = str(formData, "position_id");
   if (!/^[0-9a-f-]{36}$/i.test(id)) done("error", "Fermeture forcée", "Identifiant de position invalide.");
   const db = getSupabaseAdmin();
@@ -164,6 +168,7 @@ export async function forceClosePosition(formData: FormData) {
 
 /** Urgence : ferme toutes les positions ouvertes. Exige de taper FERMER. */
 export async function forceCloseAll(formData: FormData) {
+  assertCanWrite();
   if (str(formData, "confirm").toUpperCase() !== "FERMER") done("error", "Fermeture de toutes les positions", "Confirmation incorrecte : tapez FERMER.");
   const db = getSupabaseAdmin();
   const { data, error } = await db.rpc("admin_futures_close_all");
@@ -186,6 +191,7 @@ export async function forceCloseAll(formData: FormData) {
  * la marge de maintenance utilisée à l'ouverture est celle du marché. Les positions déjà ouvertes gardent leurs valeurs.
  */
 export async function updateFuturesMarket(formData: FormData) {
+  assertCanWrite();
   const asset = str(formData, "asset_symbol");
   const patch = {
     is_active: bool(formData, "is_active"),

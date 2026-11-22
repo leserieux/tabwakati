@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { verifySessionToken, getSessionActor, SESSION_COOKIE_NAME } from "@/lib/auth";
+import { verifySessionToken, getSessionActor, getSessionRole, SESSION_COOKIE_NAME } from "@/lib/auth";
 import DashboardShell from "@/components/dashboard-shell";
 
 export const runtime = "nodejs";
@@ -12,5 +12,5 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
-  return <DashboardShell actor={getSessionActor(token)}>{children}</DashboardShell>;
+  return <DashboardShell actor={getSessionActor(token)} readOnly={getSessionRole(token) === "viewer"}>{children}</DashboardShell>;
 }

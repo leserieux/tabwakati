@@ -1,5 +1,6 @@
 "use server";
 
+import { assertCanWrite } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/lib/data";
@@ -75,6 +76,7 @@ async function apply(opts: {
 const LEGACY_STAKING_POOL_ID = "f6c208e1-f277-4720-b303-45c1b607bf1f";
 
 export async function updateStakingPool(formData: FormData) {
+  assertCanWrite();
   const id = str(formData, "id");
   const label = str(formData, "label") || id;
   const stakingType = str(formData, "staking_type") || "flexible";
@@ -127,6 +129,7 @@ export async function updateStakingPool(formData: FormData) {
 }
 
 export async function addStakingPool(formData: FormData) {
+  assertCanWrite();
   const name = str(formData, "name");
   const assetSymbol = str(formData, "asset_symbol");
   const stakingType = str(formData, "staking_type") || "flexible";
@@ -157,6 +160,7 @@ export async function addStakingPool(formData: FormData) {
 }
 
 export async function deleteStakingPool(formData: FormData) {
+  assertCanWrite();
   const id = str(formData, "id");
   const label = str(formData, "label") || id;
   await apply({
@@ -169,6 +173,7 @@ export async function deleteStakingPool(formData: FormData) {
 }
 
 export async function updateWakatiReserveState(formData: FormData) {
+  assertCanWrite();
   const patch = {
     profit_share_pct: num(formData, "profit_share_pct"),
     max_daily_change_pct: num(formData, "max_daily_change_pct"),
@@ -191,6 +196,7 @@ export async function updateWakatiReserveState(formData: FormData) {
 }
 
 export async function updateWheelConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     free_spins_daily: num(formData, "free_spins_daily"),
     paid_spin_cost_amount: num(formData, "paid_spin_cost_amount"),
@@ -217,6 +223,7 @@ export async function updateWheelConfig(formData: FormData) {
 }
 
 export async function updatePredictionConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     bet_amount: num(formData, "bet_amount"),
     bet_min: num(formData, "bet_min"),
@@ -243,6 +250,7 @@ export async function updatePredictionConfig(formData: FormData) {
 }
 
 export async function updateScoreCreditConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     conversion_rate_base_pct: num(formData, "conversion_rate_base_pct"),
     conversion_rate_max_pct: num(formData, "conversion_rate_max_pct"),
@@ -270,6 +278,7 @@ export async function updateScoreCreditConfig(formData: FormData) {
 }
 
 export async function updatePaymentCountry(formData: FormData) {
+  assertCanWrite();
   const iso = str(formData, "iso_code");
   const label = str(formData, "label") || iso;
   const patch = {
@@ -303,6 +312,7 @@ export async function updatePaymentCountry(formData: FormData) {
 }
 
 export async function addPaymentCountry(formData: FormData) {
+  assertCanWrite();
   const iso = str(formData, "iso_code").toUpperCase();
   const name = str(formData, "name");
   const insertRow = {
@@ -337,6 +347,7 @@ export async function addPaymentCountry(formData: FormData) {
 }
 
 export async function deletePaymentCountry(formData: FormData) {
+  assertCanWrite();
   const iso = str(formData, "iso_code");
   const label = str(formData, "label") || iso;
   await apply({
@@ -349,6 +360,7 @@ export async function deletePaymentCountry(formData: FormData) {
 }
 
 export async function updateCampayConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     sandbox_min_deposit: num(formData, "sandbox_min_deposit"),
     sandbox_max_deposit: numOrNull(formData, "sandbox_max_deposit"),
@@ -371,6 +383,7 @@ export async function updateCampayConfig(formData: FormData) {
 }
 
 export async function updateAsset(formData: FormData) {
+  assertCanWrite();
   const symbol = str(formData, "symbol");
   const label = str(formData, "label") || symbol;
   const patch = {
@@ -408,6 +421,7 @@ export async function updateAsset(formData: FormData) {
 }
 
 export async function addAsset(formData: FormData) {
+  assertCanWrite();
   const symbol = str(formData, "symbol").toUpperCase();
   const name = str(formData, "name");
   const insertRow = {
@@ -449,6 +463,7 @@ export async function addAsset(formData: FormData) {
 // ── Prêts (réglages affichés sur la page Produits > Prêts) ──
 
 export async function updateStakeLoanConfig(formData: FormData) {
+  assertCanWrite();
   const patch = {
     is_active: bool(formData, "is_active"),
     min_duration_days: Math.round(num(formData, "min_duration_days")),
@@ -479,6 +494,7 @@ export async function updateStakeLoanConfig(formData: FormData) {
 }
 
 export async function updateLendingCollateralConfig(formData: FormData) {
+  assertCanWrite();
   const asset = str(formData, "asset_symbol");
   const patch = {
     max_ltv_pct: num(formData, "max_ltv_pct"),
@@ -502,6 +518,7 @@ export async function updateLendingCollateralConfig(formData: FormData) {
 }
 
 export async function updateLendingBorrowConfig(formData: FormData) {
+  assertCanWrite();
   const asset = str(formData, "asset_symbol");
   const patch = {
     apr_rate_pct: num(formData, "apr_rate_pct"),
