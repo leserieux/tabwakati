@@ -1,4 +1,0 @@
--- ANNULÉE par 20261005_revert_staking_pool_total_trigger.sql — ne rien exécuter ici.
--- Cette migration branchait trg_sync_pool_total sur user_stakes. C'était une erreur de diagnostic :
--- fn_stake / fn_unstake / fn_admin_reclaim_user_balance maintiennent déjà staking_pools.total_staked de façon
--- incrémentale, le trigger faisait double emploi (+300 constaté). Le "0" observé venait du pool MATIC (limit 1).
