@@ -55,7 +55,7 @@ export interface AssetDecision {
   pending: number; dailyPromised: number; dailyEngine: number; interestHorizon: number;
   unlockInHorizon: number; flexExit: number; lockedEarlyExit: number; stakingNeed: number;
   withdrawalReserve: number; keep: number; buffer: number;
-  have: number | null; swapStock: number; hot: number | null; vault: number | null;
+  have: number | null; swapStock: number; available: number | null; hot: number | null; vault: number | null;
   deployable: number; shortfall: number; verdict: Verdict; message: string;
 }
 
@@ -106,7 +106,7 @@ export function decideAsset(inp: AssetInput, horizon: DecisionHorizon, scenario:
   const base = {
     asset, kind, priceUsd, stakers: pools.reduce((s, p) => s + p.stakers, 0), staked, loanLocked, flexible, locked, pending,
     dailyPromised, dailyEngine, interestHorizon, unlockInHorizon, flexExit, lockedEarlyExit, stakingNeed, withdrawalReserve, keep, buffer,
-    have, swapStock, hot: plan?.hot ?? null, vault: plan?.vault ?? null, deployable, shortfall
+    have, swapStock, available, hot: plan?.hot ?? null, vault: plan?.vault ?? null, deployable, shortfall
   };
   const u = (n: number) => { const v = usd(n, priceUsd); return v === null ? "" : ` (≈ ${v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} $)`; };
   const dust = (n: number) => { const v = usd(n, priceUsd); return v !== null && v < DUST_USD; };
@@ -118,7 +118,7 @@ export function decideAsset(inp: AssetInput, horizon: DecisionHorizon, scenario:
     return { ...base, verdict: "nodata", message: "Solde détenu illisible (blockchain ou prestataire) : décision impossible tant que la lecture échoue." };
   }
   if (shortfall > 0 && !dust(shortfall)) {
-    return { ...base, verdict: "shortfall", message: `Il manque ${fmt(shortfall)} ${asset}${u(shortfall)} dans les portefeuilles pour tenir ce scénario. N'envoyez rien en staking on-chain ; ${kind === "mobile" ? "alimentez le compte chez le prestataire" : "ramenez des fonds ou alimentez le portefeuille"}.` };
+    return { ...base, verdict: "shortfall", message: `Il manque ${fmt(shortfall)} ${asset}${u(shortfall)} pour tenir ce scénario : disponible ${fmt(available ?? 0)} (détenu ${fmt(have)}${swapStock > 0 ? ` − ${fmt(Math.min(swapStock, have))} réservés aux swaps` : ""}) contre ${fmt(keep)} à garder, hors marge de sécurité. N'envoyez rien en staking on-chain ; ${kind === "mobile" ? "alimentez le compte chez le prestataire" : "ramenez des fonds ou alimentez le portefeuille"}.` };
   }
   if (kind === "mobile") {
     return { ...base, verdict: "mobile", message: `Argent mobile : pas de staking on-chain. Gardez au moins ${fmt(keep)} ${asset}${u(keep)} disponibles chez le prestataire.` };

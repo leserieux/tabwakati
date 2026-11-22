@@ -139,9 +139,9 @@ export default async function StakingPlanPage({ searchParams }: { searchParams: 
                 return (
                   <tr key={d.asset}>
                     <Td label="Actif"><b>{d.asset}</b><div className="wk-asset-sub">{d.stakers} staker(s) · staké {n4(d.staked)}</div></Td>
-                    <Td right label="Détenu (portefeuilles)">{d.have === null ? "—" : <Amount v={d.have} asset={d.asset} price={d.priceUsd} />}{d.have !== null && d.hot !== null && <div className="wk-asset-sub">chaud {n4(d.hot)} · coffre {n4(d.vault ?? 0)}</div>}</Td>
-                    <Td right label="À garder">{d.kind === "internal" ? "—" : <><Amount v={d.keep + d.buffer} asset={d.asset} price={d.priceUsd} /><div className="wk-asset-sub">retraits {n4(d.withdrawalReserve)} + staking {n4(d.stakingNeed)} + marge {n4(d.buffer)}</div></>}</Td>
-                    <Td right label="Peut partir on-chain">{d.verdict === "deploy" ? <b><Amount v={d.deployable} asset={d.asset} price={d.priceUsd} /></b> : d.verdict === "shortfall" ? <span className="wk-bad">manque {n4(d.shortfall)}</span> : "—"}</Td>
+                    <Td right label="Détenu (portefeuilles)">{d.have === null ? "—" : <Amount v={d.have} asset={d.asset} price={d.priceUsd} />}{d.have !== null && d.hot !== null && <div className="wk-asset-sub">chaud {n4(d.hot)} · coffre {n4(d.vault ?? 0)}</div>}{d.have !== null && d.available !== null && d.swapStock > 0 && <div className="wk-asset-sub">− réservé swaps {n4(Math.min(d.swapStock, d.have))} = <b>disponible {n4(d.available)}</b></div>}</Td>
+                    <Td right label="À garder">{d.kind === "internal" ? "—" : <><Amount v={d.keep + d.buffer} asset={d.asset} price={d.priceUsd} /><div className="wk-asset-sub">retraits {n4(d.withdrawalReserve)} + staking {n4(d.stakingNeed)} = {n4(d.keep)}, + marge {n4(d.buffer)}</div></>}</Td>
+                    <Td right label="Peut partir on-chain">{d.verdict === "deploy" ? <b><Amount v={d.deployable} asset={d.asset} price={d.priceUsd} /></b> : d.verdict === "shortfall" ? <span className="wk-bad">manque {n4(d.shortfall)}<div className="wk-asset-sub">à garder {n4(d.keep)} (hors marge) − disponible {n4(d.available ?? 0)}</div></span> : "—"}</Td>
                     <Td label="Décision"><Pill tone={v.tone}>{v.label}</Pill><div className="wk-asset-sub" style={{ maxWidth: 420 }}>{d.message}</div></Td>
                   </tr>
                 );
