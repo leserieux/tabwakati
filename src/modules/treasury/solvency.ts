@@ -1,0 +1,235 @@
+import { getSupabaseAdmin } from "@/core/db/data";
+import { loadOnchainCustody, getLastGoodCustody } from "@/modules/treasury/custody";
+import { fetchPawapayWallets } from "@/modules/treasury/pawapay";
+import { formatNumber } from "@/core/format";
+
+/**
+ * Solvabilité réelle : ce que la plateforme DÉTIENT vraiment (on-chain + PawaPay)
+ * face à ce qu'elle DOIT aux utilisateurs. Source unique partagée par la page Solvabilité
+ * et la Vue d'ensemble, pour que les deux affichent les mêmes chiffres.
+ */
+// Tokens gérés en interne : aucune réserve à couvrir ici
+const INTERNAL_ONLY_ASSETS = new Set(["WAKATI"]);
+export const EPS = 0.00000001;
+
+export type Liab = { total: number; count: number };
+export type Status = "covered" | "minor" | "short" | "sweep" | "error";
+
+/** Une ligne = un actif : ce que j'ai, ce que je dois, le résultat. */
+export interface Line {
+  asset: string;
+  label: string; // ex. "BNB (BSC)"
+  have: number | null;
+  owe: number;
+  note?: string; // ex. "dont 2 sur les adresses des utilisateurs"
+  status: Status;
+  priceUsd: number | null;
+  error?: string;
+  details?: { label: string; value: number }[];
+  // Où se trouve l'argent détenu (utile à la page « Réserve de retrait »)
+  hot?: number | null; // portefeuille de retrait (ou chez le prestataire pour l'argent mobile)
+  vault?: number; // coffre
+  onUsers?: number; // pas encore ramassé sur les adresses des utilisateurs
+  // Actif lu sur plusieurs réseaux dont certains sont illisibles : `have` reste null (on ne devine pas), mais on garde ce qui a pu être lu.
+  partialHave?: number; // somme des réseaux lus (minimum de ce qui est détenu)
+  failedNetworks?: string[]; // réseaux dont la lecture a échoué
+  readAt?: number; // heure de lecture des soldes on-chain (ms)
+  // Si l'actif est illisible : dernière valeur COMPLÈTE lue sur cette instance serveur (pour information, jamais utilisée dans les calculs).
+  lastKnown?: { have: number; at: number };
+}
+
+// ─────────────────────────── Chargement des données ───────────────────────────
+
+export async function loadLiabilities(): Promise<Map<string, Liab>> {
+  const { data, error } = await getSupabaseAdmin().rpc("get_asset_liabilities");
+  if (error) throw new Error(`Impossible de lire ce qui est dû aux utilisateurs (${error.message})`);
+  const map = new Map<string, Liab>();
+  for (const l of (data as any[]) || []) {
+    map.set(l.asset_symbol, { total: Number(l.total_liability), count: Number(l.user_count) });
+  }
+  return map;
+}
+
+function computeStatus(have: number | null, owe: number, treasuryOnly: number | null): Status {
+  if (have === null) return "error";
+  if (have < owe - EPS) return "short";
+  if (treasuryOnly !== null && treasuryOnly < owe - EPS) return "sweep";
+  return "covered";
+}
+
+export async function loadCrypto(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[] }> {
+  const db = getSupabaseAdmin();
+  const { data: assets, error: assetsError } = await db
+    .from("supported_assets")
+    .select("symbol, network, contract_address, decimals, ledger_symbol")
+    .neq("network", "Fiat")
+    .eq("is_active", true);
+  if (assetsError) throw new Error(`Impossible de lire les actifs (${assetsError.message})`);
+
+  // Un actif unifié (ex. USDC) = une seule ligne, même s'il existe sur plusieurs réseaux :
+  // les utilisateurs voient un seul solde « USDC », donc le dû est global et les réserves de tous les réseaux le couvrent.
+  type Asset = NonNullable<typeof assets>[number];
+  const groups = new Map<string, Asset[]>();
+  for (const a of assets || []) {
+    const key = String(a.ledger_symbol || a.symbol);
+    const list = groups.get(key) || [];
+    list.push(a);
+    groups.set(key, list);
+  }
+
+  // Dû d'un groupe : solde unifié + d'éventuels soldes historiques stockés sous les symboles par réseau
+  const liabilityOf = (ledger: string, members: Asset[]): Liab => {
+    const keys = new Set<string>([ledger, ...members.map((m) => m.symbol)]);
+    let total = 0;
+    let count = 0;
+    for (const k of keys) {
+      const l = liab.get(k);
+      if (l) {
+        total += l.total;
+        count += l.count;
+      }
+    }
+    return { total, count };
+  };
+
+  const active = [...groups.entries()]
+    .filter(([ledger, members]) => !INTERNAL_ONLY_ASSETS.has(ledger) && !members.some((m) => INTERNAL_ONLY_ASSETS.has(m.symbol)))
+    .map(([ledger, members]) => ({ ledger, members, l: liabilityOf(ledger, members) }))
+    .filter((g) => !(g.l.total === 0 && g.l.count === 0)); // WAKATI : section dédiée plus bas
+
+  const custody = await loadOnchainCustody(active.flatMap((g) => g.members));
+
+  const lines: Line[] = active.map(({ ledger, members, l }) => {
+    const owe = l.total;
+    const cs = members.map((m) => ({ m, c: custody.get(m.symbol) }));
+
+    const sum = (pick: (c: NonNullable<(typeof cs)[number]["c"]>) => number | null): number | null => {
+      let t = 0;
+      for (const { c } of cs) {
+        const v = c ? pick(c) : null;
+        if (v === null) return null;
+        t += v;
+      }
+      return t;
+    };
+
+    const have = sum((c) => c.total);
+    const treasury = sum((c) => c.treasury);
+    const vault = cs.reduce((n, { c }) => n + (c?.vault ?? 0), 0);
+    const users = cs.reduce((n, { c }) => n + (c?.users ?? 0), 0);
+    const usersFailed = cs.reduce((n, { c }) => n + (c?.usersFailed ?? 0), 0);
+    const errors = cs.map(({ m, c }) => (c?.error ? (members.length > 1 ? `${m.network} : ${c.error}` : c.error) : null)).filter(Boolean) as string[];
+
+    const noteParts: string[] = [];
+    if (users > EPS) noteParts.push(`dont ${formatNumber(users)} encore sur les adresses des utilisateurs`);
+    if (usersFailed > 0) noteParts.push(`${usersFailed} adresse(s) non lue(s)`);
+
+    const multi = members.length > 1;
+    const failedNetworks = cs.filter(({ c }) => !c || c.total === null).map(({ m }) => m.network);
+    const partialHave = multi && have === null ? cs.reduce((n, { c }) => n + (c && c.total !== null ? c.total : 0), 0) : undefined;
+    const readTimes = cs.map(({ c }) => c?.readAt).filter((t): t is number => typeof t === "number");
+    const readAt = readTimes.length ? Math.min(...readTimes) : undefined;
+    let lastKnown: { have: number; at: number } | undefined;
+    if (have === null) {
+      const goods = members.map((m) => getLastGoodCustody(m.symbol));
+      if (goods.every((g) => g && g.total !== null && typeof g.readAt === "number")) {
+        lastKnown = { have: goods.reduce((n, g) => n + (g!.total as number), 0), at: Math.min(...goods.map((g) => g!.readAt as number)) };
+      }
+    }
+    const priceUsd = prices.get(ledger) ?? members.map((m) => prices.get(m.symbol)).find((p) => p !== undefined) ?? null;
+
+    return {
+      asset: multi ? ledger : members[0].symbol,
+      label: multi ? `${ledger} (${members.map((m) => m.network).join(" + ")})` : `${members[0].symbol} (${members[0].network})`,
+      have,
+      owe,
+      note: noteParts.join(" · ") || undefined,
+      // Le coffre est « à l'abri » mais fait partie de la trésorerie : seul ce qui traîne sur les adresses des utilisateurs reste à balayer.
+      status: computeStatus(have, owe, treasury !== null ? treasury + vault : null),
+      priceUsd,
+      error: errors.join(" · ") || undefined,
+      // Détail par réseau (utile pour savoir où se trouvent les fonds avant un retrait)
+      details: multi
+        ? cs.map(({ m, c }) => ({ label: c && c.total !== null ? m.network : `${m.network} (illisible)`, value: c?.total ?? 0 }))
+        : undefined,
+      hot: treasury,
+      vault,
+      onUsers: users,
+      partialHave,
+      failedNetworks: failedNetworks.length ? failedNetworks : undefined,
+      readAt,
+      lastKnown
+    };
+  });
+
+  lines.sort((a, b) => a.asset.localeCompare(b.asset));
+
+  return { lines };
+}
+
+export async function loadMobileMoney(liab: Map<string, Liab>, prices: Map<string, number>): Promise<{ lines: Line[]; error?: string }> {
+  const { data: countries, error } = await getSupabaseAdmin()
+    .from("payment_countries")
+    .select("iso_code, currency_code, wallet_asset_symbol")
+    .eq("is_active", true);
+  if (error) throw new Error(`Impossible de lire les pays (${error.message})`);
+
+  const { wallets, error: pawapayError } = await fetchPawapayWallets();
+
+  const byAsset = new Map<string, { iso: string; currency: string }[]>();
+  for (const c of countries || []) {
+    const list = byAsset.get(c.wallet_asset_symbol) || [];
+    list.push({ iso: String(c.iso_code).toUpperCase(), currency: c.currency_code });
+    byAsset.set(c.wallet_asset_symbol, list);
+  }
+
+  const lines: Line[] = [];
+  for (const [asset, list] of byAsset) {
+    const owe = liab.get(asset)?.total ?? 0;
+    const details = list.map((c) => ({
+      label: `${c.iso} (${c.currency})`,
+      value: wallets.filter((w) => w.country === c.iso).reduce((n, w) => n + w.balance, 0)
+    }));
+    const have = pawapayError ? null : details.reduce((n, d) => n + d.value, 0);
+    lines.push({
+      asset,
+      label: `${asset} (PawaPay)`,
+      have,
+      owe,
+      status: computeStatus(have, owe, null),
+      priceUsd: prices.get(asset) ?? null,
+      error: pawapayError,
+      details,
+      hot: have,
+      vault: 0,
+      onUsers: 0
+    });
+  }
+  lines.sort((a, b) => a.asset.localeCompare(b.asset));
+  // On masque un actif sans rien de dû ni de détenu (ex. un pays pas encore utilisé)
+  return { lines: lines.filter((l) => l.owe > EPS || (l.have ?? 0) > EPS), error: pawapayError };
+}
+
+export const MINOR_USD = 1; // en dessous, un manque est signalé « mineur » (poussière)
+
+function gapOf(l: Line): number | null {
+  return l.have === null ? null : l.have - l.owe;
+}
+
+/** Un manque de moins de MINOR_USD $ est « mineur » et ne déclenche pas l'alerte rouge. */
+export function classifyMinor(l: Line): Line {
+  const g = gapOf(l);
+  if (l.status === "short" && g !== null && l.priceUsd !== null && Math.abs(g * l.priceUsd) < MINOR_USD) return { ...l, status: "minor" };
+  return l;
+}
+
+/** Charge toutes les lignes (crypto + argent mobile) avec leur statut. Ne lève jamais : l'erreur est renvoyée. */
+export async function loadSolvencyLines(prices: Map<string, number>): Promise<{ crypto: Line[]; mobile: Line[]; error: string | null }> {
+  try {
+    const liab = await loadLiabilities();
+    const [c, m] = await Promise.all([loadCrypto(liab, prices), loadMobileMoney(liab, prices)]);
+    return { crypto: c.lines.map(classifyMinor), mobile: m.lines.map(classifyMinor), error: null };
+  } catch (e: any) {
+    return { crypto: [], mobile: [], error: e?.message || "Erreur de chargement" };
+  }
+}
