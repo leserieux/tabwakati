@@ -2,8 +2,8 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 const COOKIE_NAME = "wakati_admin_session";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h
-export type Role = "admin" | "viewer"; // admin = tout ; viewer = lecture seule
-const ROLES: Role[] = ["admin", "viewer"];
+export type Role = "admin" | "super_admin" | "finance" | "support" | "risk" | "viewer"; // admin (ancien mot de passe partagé) et super_admin = tout ; viewer = lecture seule ; les autres : voir lib/permissions.ts
+const ROLES: Role[] = ["admin", "super_admin", "finance", "support", "risk", "viewer"];
 const DEFAULT_ACTOR = "admin"; // utilisé si aucun nom n'a été saisi (anciens tokens, ou champ vide)
 const MAX_ACTOR_LEN = 40;
 

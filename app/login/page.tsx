@@ -48,9 +48,9 @@ export default function LoginPage() {
       <div className="wk-login-form-side">
         <form onSubmit={handleSubmit} className="wk-login-form">
           <h1>Connexion</h1>
-          <p>Entre ton prénom et le mot de passe administrateur.</p>
-          <label className="wk-label" htmlFor="name">Prénom</label>
-          <input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} className="wk-input" autoFocus autoComplete="name" placeholder="Ex : Yannick" />
+          <p>Entre ton identifiant et ton mot de passe.</p>
+          <label className="wk-label" htmlFor="name">Identifiant</label>
+          <input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} className="wk-input" autoFocus autoComplete="name" placeholder="Ex : yannick" />
           <label className="wk-label" htmlFor="password" style={{ marginTop: 12 }}>Mot de passe</label>
           <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="wk-input" autoComplete="current-password" />
           {error && <p className="wk-form-error" role="alert">{error}</p>}

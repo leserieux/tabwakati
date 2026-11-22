@@ -6,6 +6,7 @@ import { formatCompactNumber, formatDateTime, formatToken, formatUsd, shortId } 
 import { loadUserFutures } from "@/lib/futures";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/lib/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
+import AccountControl from "@/components/account-control";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,7 +81,7 @@ type RiskFlagRow = {
   detected_at: string | null;
 };
 
-export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string } }) {
+export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string; saved?: string; error?: string } }) {
   const futuresPromise = loadUserFutures(params.id);
   const db = getSupabaseAdmin();
   const selectedAsset = (searchParams?.asset || "").trim();
@@ -171,6 +172,8 @@ export default async function UserDetailPage({ params, searchParams }: { params:
         <StatCard label="Variation nette" value={formatToken(totalNetVariation)} sub="Flux + solde" />
         <StatCard label="Risque" value={riskScore ? `${riskScore.score ?? 0}/100` : "—"} sub={riskScore?.level || "normal"} tone={riskTone} />
       </div>
+
+      <AccountControl userId={user.id} saved={searchParams?.saved} error={searchParams?.error} />
 
       <Section title="Décision admin" hint="Résumé lisible des signaux récents et du niveau d’attention recommandé.">
         <div className="wk-panel" style={{ borderLeft: `4px solid ${decision.tone === "bad" ? "var(--bad)" : decision.tone === "warn" ? "var(--warn)" : decision.tone === "info" ? "var(--info)" : "var(--ok)"}` }}>
