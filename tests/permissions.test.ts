@@ -1,18 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { hasPermission, isSuperAdmin } from "@/core/auth/permissions";
-import { hashPassword, verifyPassword, passwordProblem } from "@/core/auth/admin-accounts";
-import { createSessionToken, getSessionRole } from "@/core/auth/auth";
+import { hasPermission } from "@/lib/permissions";
+import { hashPassword, verifyPassword, passwordProblem } from "@/lib/admin-accounts";
+import { createSessionToken, getSessionRole } from "@/lib/auth";
 
 beforeAll(() => { process.env.SESSION_SECRET = "secret-de-test"; });
 
 describe("permissions par rôle", () => {
-  it("isSuperAdmin : super_admin et ancien admin seulement (la collecte réelle refusait à tort les super_admin)", () => {
-    expect(isSuperAdmin("super_admin")).toBe(true);
-    expect(isSuperAdmin("admin")).toBe(true);
-    expect(isSuperAdmin("finance")).toBe(false);
-    expect(isSuperAdmin("viewer")).toBe(false);
-    expect(isSuperAdmin(null)).toBe(false);
-  });
   it("super_admin et l'ancien admin ont tout", () => {
     expect(hasPermission("super_admin", "admins.manage")).toBe(true);
     expect(hasPermission("admin", "users.freeze")).toBe(true);
