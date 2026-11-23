@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
-import { getRequestSession, unauthorized } from "@/core/auth/guards";
+import { getRequestSession, unauthorized, forbidden, sessionCan } from "@/core/auth/guards";
 import { loadSnapshots } from "@/modules/treasury/custody-policy";
 import { isValidPrice } from "@/core/valuation";
 
@@ -16,7 +16,9 @@ function esc(v: string | number | null): string {
 
 /** Relevé mensuel de couverture : une ligne par jour et par actif (CSV, séparateur « ; », ouvrable dans Excel). */
 export async function GET(req: NextRequest) {
-  if (!getRequestSession(req)) return unauthorized();
+  const session = getRequestSession(req);
+  if (!session) return unauthorized();
+  if (!sessionCan(session, "exports.run")) return forbidden("Ton rôle ne permet pas les exports.");
 
   const month = req.nextUrl.searchParams.get("month") || "";
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {

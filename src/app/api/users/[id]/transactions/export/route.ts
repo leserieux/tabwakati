@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/core/db/data";
-import { getRequestSession, unauthorized } from "@/core/auth/guards";
+import { getRequestSession, unauthorized, forbidden, sessionCan } from "@/core/auth/guards";
 import { txStatusLabel, txTypeLabel } from "@/modules/operations/transactions";
 
 export const runtime = "nodejs";
@@ -12,7 +12,9 @@ function csvEscape(value: unknown): string {
 }
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!getRequestSession(req)) return unauthorized();
+  const session = getRequestSession(req);
+  if (!session) return unauthorized();
+  if (!sessionCan(session, "exports.run")) return forbidden("Ton rôle ne permet pas les exports.");
 
   const asset = req.nextUrl.searchParams.get("asset") || undefined;
   const db = getSupabaseAdmin();

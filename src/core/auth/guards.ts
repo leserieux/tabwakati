@@ -4,7 +4,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionActor, getSessionRole, SESSION_COOKIE_NAME, type Role } from "@/core/auth/auth";
-import { isSuperAdmin } from "@/core/auth/permissions";
+import { hasPermission, isSuperAdmin, type Permission } from "@/core/auth/permissions";
 
 export interface RequestSession { actor: string; role: Role }
 
@@ -27,4 +27,9 @@ export function forbidden(message = "Action réservée aux super-administrateurs
 /** Vrai si le rôle peut écrire (super_admin ou ancien « admin »). */
 export function canWrite(role: Role): boolean {
   return isSuperAdmin(role);
+}
+
+/** Vrai si la session a cette permission précise (exports, finance…). À utiliser après getRequestSession(). */
+export function sessionCan(session: RequestSession, permission: Permission): boolean {
+  return hasPermission(session.role, permission);
 }

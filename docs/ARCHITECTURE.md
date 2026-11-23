@@ -47,11 +47,13 @@ app/  ──►  modules/  ──►  core/
 
 | Couche | Fichier | Contrôle |
 |---|---|---|
-| Middleware (Edge) | `src/middleware.ts` + `core/auth/edge.ts` | `/dashboard/*` : jeton signé (HMAC-SHA256) et non expiré, sinon redirection vers `/login` |
+| Middleware (Edge) | `src/middleware.ts` + `core/auth/edge.ts`, `session-check-edge.ts`, `page-access.ts`, `access.ts` | Dans l'ordre : IP autorisée (option) ; jeton signé (HMAC-SHA256) et non expiré ; session non révoquée (`admin_sessions`, cache 30 s) ; permission du rôle pour l'URL (`/dashboard/*` et `/api/*`, actions serveur comprises). Sinon : redirection `/login` ou `/dashboard/forbidden` (JSON 401/403 pour l'API) |
 | Layout | `app/dashboard/layout.tsx` | Revérifie le jeton côté Node, affiche le nom et le mode lecture seule |
 | Actions serveur | `core/auth/session.ts` : `assertCan()` / `assertCanWrite()` | **Première ligne de chaque action** qui écrit : rôle et permission précise |
 | Routes `/api/*` | `core/auth/guards.ts` : `getRequestSession()` | Non couvertes par le middleware : chacune se protège |
 | Base | clé `service_role`, **serveur uniquement** | `core/db/supabase.ts` n'est jamais importé par un composant `"use client"` |
+
+**Ajouter une page : elle DOIT avoir une règle dans `core/auth/page-access.ts`** (sinon elle est réservée aux super-admins ; `tests/page-access.test.ts` échoue pour toute page du menu sans règle).
 
 Rôles : `super_admin` (et l'ancien `admin`) = tout ; `finance`, `support`, `risk` = permissions ciblées ; `viewer` = lecture seule. Matrice : `core/auth/permissions.ts`.
 
@@ -59,7 +61,7 @@ Rôles : `super_admin` (et l'ancien `admin`) = tout ; `finance`, `support`, `ris
 
 1. Logique : `src/modules/<domaine>/<sujet>.ts` avec `loadSujet()` (ne lève jamais : renvoie `error` en clair) et les calculs purs à côté.
 2. Page : `src/app/dashboard/<url>/page.tsx` (`export const dynamic = "force-dynamic"`), composants de `@/components/ui`.
-3. Menu : une ligne dans `src/core/nav-config.ts` (l'onglet apparaît tout seul, aucun layout à créer).
+3. Menu : une ligne dans `src/core/nav-config.ts` (l'onglet apparaît tout seul, aucun layout à créer) **et une règle dans `src/core/auth/page-access.ts`**.
 4. Écriture : une action serveur dans `actions.ts` à côté, `assertCan("…")` en première ligne, trace dans `core/audit.ts`.
 5. Test : `tests/<sujet>.test.ts` sur la logique pure.
 6. Respecter [CONVENTIONS.md](CONVENTIONS.md) (actifs, frais, glossaire).

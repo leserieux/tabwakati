@@ -2,8 +2,9 @@
  * Format du jeton de session : partie PURE, sans aucun import Node.
  * Elle est partagée par le serveur Node (auth.ts) et par le middleware Edge (edge.ts).
  *
- *   nouveau format : "expiresAt.actorBase64.role.signature"
- *   ancien format  : "expiresAt.actorBase64.signature"  (lu comme rôle « admin »)
+ *   format actuel : "expiresAt.actorBase64.role.sessionId.signature"  (sessionId = ligne de admin_sessions : révocable)
+ *   format 2      : "expiresAt.actorBase64.role.signature"            (sans identifiant : non révocable, expire seul)
+ *   ancien format : "expiresAt.actorBase64.signature"                 (lu comme rôle « admin »)
  */
 
 export const SESSION_COOKIE_NAME = "wakati_admin_session";
@@ -29,7 +30,11 @@ export interface ParsedToken {
   expiresAt: number;
   actorB64: string;
   role: Role;
+  /** Identifiant de la session en base (jetons récents seulement) : sert à la révocation. */
+  sid?: string;
 }
+
+const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * Découpe un jeton et contrôle sa FORME (rôle connu, date lisible). Ne vérifie NI la signature NI l'expiration :
@@ -38,13 +43,15 @@ export interface ParsedToken {
 export function parseToken(token: string | undefined | null): ParsedToken | null {
   if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3 && parts.length !== 4) return null;
+  if (parts.length < 3 || parts.length > 5) return null;
   const [expiresAtStr, actorB64] = parts;
   const signature = parts[parts.length - 1];
-  const roleStr = parts.length === 4 ? parts[2] : "admin"; // ancien format : toujours admin
+  const roleStr = parts.length >= 4 ? parts[2] : "admin"; // ancien format : toujours admin
+  const sid = parts.length === 5 ? parts[3] : undefined;
+  if (sid !== undefined && !SID_RE.test(sid)) return null;
   if (!ROLES.includes(roleStr as Role)) return null;
   const expiresAt = Number(expiresAtStr);
   if (!Number.isFinite(expiresAt)) return null;
-  const payload = parts.length === 4 ? `${expiresAtStr}.${actorB64}.${roleStr}` : `${expiresAtStr}.${actorB64}`;
-  return { payload, signature, expiresAt, actorB64, role: roleStr as Role };
+  const payload = parts.slice(0, parts.length - 1).join(".");
+  return { payload, signature, expiresAt, actorB64, role: roleStr as Role, sid };
 }

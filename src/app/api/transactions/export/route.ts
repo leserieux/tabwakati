@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/core/db/data";
-import { getRequestSession, unauthorized } from "@/core/auth/guards";
+import { getRequestSession, unauthorized, forbidden, sessionCan } from "@/core/auth/guards";
 import { applyTransactionFilters, applyTransactionSearch, txTypeLabel, txStatusLabel, type TxFilters } from "@/modules/operations/transactions";
 
 export const runtime = "nodejs";
@@ -14,7 +14,9 @@ function csvEscape(v: unknown): string {
 
 export async function GET(req: NextRequest) {
   // Cette route n'est pas sous /dashboard : le middleware ne la protège pas, on vérifie donc la session ici.
-  if (!getRequestSession(req)) return unauthorized();
+  const session = getRequestSession(req);
+  if (!session) return unauthorized();
+  if (!sessionCan(session, "exports.run")) return forbidden("Ton rôle ne permet pas les exports.");
 
   const params = req.nextUrl.searchParams;
   const filters: TxFilters = {

@@ -39,7 +39,8 @@ npm run build                  # build de production
 | `npm run dev` | Serveur de développement |
 | `npm run typecheck` | Vérification TypeScript |
 | `npm test` | Tests unitaires (vitest) de la logique de calcul et de sécurité |
-| `npm run check` | Typecheck puis tests |
+| `npm run lint` | ESLint (plafond d'avertissements ; interdit toute nouvelle erreur) |
+| `npm run check` | Typecheck, lint puis tests |
 | `npm run build` / `npm start` | Build et lancement de production |
 
 ## Variables d'environnement
@@ -52,6 +53,7 @@ Modèle complet commenté : [`.env.example`](.env.example). Sur Vercel : *Settin
 | `ADMIN_PASSWORD` | oui | Accès partagé « admin » (ancien mode) |
 | `ADMIN_VIEWER_PASSWORD` | non | Second mot de passe, accès en lecture seule |
 | `ADMIN_LEGACY_LOGIN` | non | `off` interdit l'accès partagé (comptes nominatifs seulement) |
+| `ADMIN_IP_ALLOWLIST` | non | IP (ou plages IPv4) autorisées à ouvrir la console ; vide = pas de restriction |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | oui | Base de données (clé serveur, jamais exposée au navigateur) |
 | `CRON_SECRET` | oui | Autorise la tâche planifiée `/api/cron/*` |
 | `DASHBOARD_API_SECRET` | oui | Lecture des soldes PawaPay |
@@ -102,12 +104,12 @@ Principe : **une phase à la fois**. Une phase est terminée quand `npm run chec
 
 Objectif : pouvoir modifier le code sans peur. *La refonte a été faite sans accès à `npm install` ni à la base : cette phase la valide en conditions réelles.*
 
-- [ ] `npm install`, `npm run check`, `npm run build` (le `package-lock.json` doit être régénéré : il date d'avant l'ajout de vitest)
-- [ ] Déployer en **preview** Vercel et comparer avec la production : Accueil, Actifs, Couverture, Résultat, Crédit, fiche utilisateur (mêmes chiffres), puis tester connexion, déconnexion, un export CSV, un rôle lecture seule
-- [ ] Versionner le schéma : `supabase db pull` dans `supabase/migrations/` (voir `supabase/README.md`)
-- [ ] CI GitHub Actions : typecheck + tests + build à chaque Pull Request
-- [ ] ESLint + Prettier ; interdire `any` dans le code nouveau
-- [ ] Sortir `mobile/` dans son propre dépôt
+- [x] `npm install`, `npm run check`, `npm run build` : vérifiés le 2026-11-22 (typecheck, lint, 62 tests, build de production OK) ; `package-lock.json` régénéré, `npm ci` fonctionne
+- [ ] Déployer en **preview** Vercel et comparer avec la production : Accueil, Actifs, Couverture, Résultat, Crédit, fiche utilisateur (mêmes chiffres), puis tester connexion, déconnexion, un export CSV, un rôle lecture seule *(à faire par toi : je n'ai pas accès à Vercel)*
+- [ ] Versionner le schéma : 5 migrations récentes déjà dans `supabase/migrations/` ; reste `supabase db pull` pour les ~313 plus anciennes (voir `supabase/README.md`)
+- [x] CI GitHub Actions : `.github/workflows/ci.yml` (typecheck + lint + tests + build à chaque Pull Request) *(à cocher « verte » après le premier passage sur GitHub)*
+- [x] ESLint + Prettier : `.eslintrc.json`, `.prettierrc.json` ; `any` en avertissement avec **plafond** (`npm run lint` échoue au-delà de 275 avertissements : à baisser au fil des corrections). Prettier configuré mais pas imposé : le lancer réécrirait 127 fichiers, à faire dans un commit à part
+- [ ] Sortir `mobile/` dans son propre dépôt *(à faire par toi ; il reste `pubspec.yaml` à la racine)*
 
 **Terminé quand** : la CI est verte, la preview donne les mêmes chiffres que la production, le schéma SQL est dans le dépôt.
 
@@ -115,16 +117,16 @@ Objectif : pouvoir modifier le code sans peur. *La refonte a été faite sans ac
 
 Objectif : qu'aucun compte ne puisse faire plus que son métier, et que rien de sensible ne se fasse seul.
 
-- [ ] Créer un compte nominatif par administrateur, puis `ADMIN_LEGACY_LOGIN=off`
-- [ ] Permissions **par page et par route API** (matrice rôle × page) : masquer les entrées de menu non permises, exiger `finance.read` pour les exports financiers
-- [ ] Limitation de tentatives de connexion par IP (en plus du verrouillage par compte)
-- [ ] Sessions révocables (table `admin_sessions`, « se déconnecter partout », jeton court) au lieu d'un jeton de 12 h sans état
-- [ ] Authentification à deux facteurs (TOTP), obligatoire pour les rôles finance et super-admin
-- [ ] **Motif obligatoire** et **double validation** (quatre yeux) au-dessus d'un seuil : collecte réelle, fermeture forcée des futures, burn, changement des frais, retrait manuel
-- [ ] Journal d'audit infalsifiable (écriture seule, chaînage par empreinte)
-- [ ] Restriction par IP / VPN pour l'accès à la console (option)
+- [ ] Créer un compte nominatif par administrateur, puis `ADMIN_LEGACY_LOGIN=off` *(à faire par toi, dans Système › Administrateurs)*
+- [x] Permissions **par page et par route API** : matrice `src/core/auth/page-access.ts`, appliquée par le middleware (pages, actions serveur et `/api/*`), menu et onglets filtrés par rôle, accueil réduit pour les rôles sans accès financier ; permissions `exports.run` et `settings.manage` ; une URL sans règle est refusée par défaut
+- [x] Limitation de tentatives de connexion par IP (10 échecs en 15 minutes) en plus du verrouillage par compte (5 échecs)
+- [x] Sessions révocables : table `admin_sessions`, « Déconnecter partout » par compte, fermeture automatique à la désactivation ou au changement de mot de passe, révocation effective en 30 s ; jeton de 12 h conservé (la révocation le rend sûr)
+- [ ] Authentification à deux facteurs (TOTP), obligatoire pour les rôles finance et super-admin *(reporté volontairement)*
+- [ ] **Motif obligatoire** et **double validation** (quatre yeux) au-dessus d'un seuil : collecte réelle, fermeture forcée des futures, burn, changement des frais *(retrait manuel : reporté avec la file de retraits)*. Déjà fait : motif obligatoire pour geler un compte, clore un signal de risque, rejeter un KYC
+- [x] Journal d'audit infalsifiable : écriture seule **et** chaînage par empreinte SHA-256 (`fn_admin_audit_verify()`, contrôle horaire, alerte critique si la chaîne est rompue)
+- [x] Restriction par IP pour l'accès à la console (option `ADMIN_IP_ALLOWLIST`)
 
-**Terminé quand** : un compte « support » ne peut ni voir la trésorerie ni exporter ; une action sensible exige un motif et une seconde personne ; le journal d'audit ne peut plus être modifié.
+**Terminé quand** : un compte « support » ne peut ni voir la trésorerie ni exporter *(fait, testé)* ; une action sensible exige un motif et une seconde personne *(reste à faire)* ; le journal d'audit ne peut plus être modifié *(fait, testé)*.
 
 ### Phase 3 : fiabilité des chiffres et performance
 

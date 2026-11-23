@@ -4,7 +4,7 @@ import { useState } from "react";
 import Nav from "@/components/nav";
 import LogoutButton from "@/components/logout-button";
 
-export default function DashboardShell({ actor, readOnly = false, children }: { actor: string | null; readOnly?: boolean; children: React.ReactNode }) {
+export default function DashboardShell({ actor, role = null, readOnly = false, children }: { actor: string | null; role?: string | null; readOnly?: boolean; children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -15,7 +15,7 @@ export default function DashboardShell({ actor, readOnly = false, children }: { 
           <div className="wk-brand-copy"><div className="wk-brand-name">Wakati</div><div className="wk-brand-sub">Console d'administration</div></div>
           <button type="button" className="wk-sidebar-toggle" aria-label={collapsed ? "Développer le menu" : "Réduire le menu"} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}><span aria-hidden="true">{collapsed ? "›" : "‹"}</span></button>
         </div>
-        <Nav collapsed={collapsed} />
+        <Nav collapsed={collapsed} role={role} />
         <div className="wk-side-foot">
           {actor && <div className="wk-user-chip"><span className="wk-user-name">{collapsed ? actor.slice(0, 1).toUpperCase() : `Connecté : ${actor}${readOnly ? " (lecture seule)" : ""}`}</span></div>}
           <LogoutButton />

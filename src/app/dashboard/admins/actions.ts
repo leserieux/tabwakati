@@ -6,6 +6,7 @@ import { assertCan } from "@/core/auth/session";
 import { getSupabaseAdmin } from "@/core/db/data";
 import { getCurrentActor, logAdminAction } from "@/core/audit";
 import { hashPassword, passwordProblem } from "@/core/auth/admin-accounts";
+import { revokeAllSessionsFor } from "@/core/auth/sessions";
 
 const PATH = "/dashboard/admins";
 const ROLES = ["super_admin", "finance", "support", "risk", "viewer"];
@@ -46,7 +47,9 @@ export async function setAdminActive(formData: FormData) {
   const { error } = await getSupabaseAdmin().from("admin_users").update({ is_active: active, updated_at: new Date().toISOString() }).eq("username", username);
   await logAdminAction({ action: "admins.set_active", summary: `${active ? "Réactivation" : "Désactivation"} du compte ${username}`, target: username, status: error ? "error" : "success", errorMessage: error?.message });
   if (error) done(false, error.message);
-  done(true, `Compte ${username} ${active ? "réactivé" : "désactivé"}.`);
+  // Un compte désactivé ne doit plus avoir aucune session ouverte.
+  const closed = active ? 0 : await revokeAllSessionsFor(username, getCurrentActor(), "Compte désactivé");
+  done(true, `Compte ${username} ${active ? "réactivé" : `désactivé (${closed} session(s) fermée(s))`}.`);
 }
 
 export async function resetAdminPassword(formData: FormData) {
@@ -58,5 +61,17 @@ export async function resetAdminPassword(formData: FormData) {
   const { error } = await getSupabaseAdmin().from("admin_users").update({ password_hash: hashPassword(password), failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() }).eq("username", username);
   await logAdminAction({ action: "admins.reset_password", summary: `Mot de passe réinitialisé : ${username}`, target: username, status: error ? "error" : "success", errorMessage: error?.message });
   if (error) done(false, error.message);
-  done(true, `Mot de passe de ${username} réinitialisé.`);
+  // Après un changement de mot de passe, les anciennes sessions (peut-être volées) sont fermées.
+  const closed = await revokeAllSessionsFor(username, getCurrentActor(), "Mot de passe réinitialisé");
+  done(true, `Mot de passe de ${username} réinitialisé (${closed} session(s) fermée(s)).`);
+}
+
+/** Déconnecte un administrateur de tous ses appareils. */
+export async function revokeAdminSessions(formData: FormData) {
+  assertCan("admins.manage");
+  const username = str(formData, "username");
+  if (!username) done(false, "Compte manquant.");
+  const closed = await revokeAllSessionsFor(username, getCurrentActor(), "Déconnexion forcée par un super-admin");
+  await logAdminAction({ action: "admins.revoke_sessions", summary: `Sessions fermées : ${username} (${closed})`, target: username, status: "success" });
+  done(true, `${closed} session(s) de ${username} fermée(s).`);
 }

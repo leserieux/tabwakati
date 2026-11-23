@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequestSession, unauthorized, forbidden, canWrite } from "@/core/auth/guards";
+import { getRequestSession, unauthorized, forbidden, canWrite, sessionCan } from "@/core/auth/guards";
 import { logAdminAction } from "@/core/audit";
 
 // Cette route n'est pas sous /dashboard : le middleware ne la protège pas, on vérifie la session ici.
@@ -23,6 +23,7 @@ type SweepResult = {
 export async function POST(req: NextRequest) {
   const session = getRequestSession(req);
   if (!session) return unauthorized();
+  if (!sessionCan(session, "finance.read")) return forbidden("Ton rôle ne permet pas d'accéder à la collecte des dépôts.");
 
   const body = await req.json().catch(() => ({}));
   const dryRun = body.dryRun !== false; // dry-run par défaut, comme la fonction edge elle-même

@@ -16,16 +16,19 @@ function sign(payload: string): string {
   return createHmac("sha256", getSecret()).update(payload).digest("hex");
 }
 
-/** Crée un jeton de session signé "expiresAt.actorBase64.role.signature" (l'ancien format sans rôle reste lisible : rôle admin). */
-export function createSessionToken(actor?: string, role: Role = "admin"): string {
+/**
+ * Crée un jeton de session signé "expiresAt.actorBase64.role[.sessionId].signature".
+ * Avec `sid` (identifiant de la ligne admin_sessions), le jeton est révocable ; les anciens formats restent lisibles.
+ */
+export function createSessionToken(actor?: string, role: Role = "admin", sid?: string): string {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const actorB64 = Buffer.from(sanitizeActor(actor), "utf8").toString("base64url");
-  const payload = `${expiresAt}.${actorB64}.${role}`;
+  const payload = sid ? `${expiresAt}.${actorB64}.${role}.${sid}` : `${expiresAt}.${actorB64}.${role}`;
   return `${payload}.${sign(payload)}`;
 }
 
 /** Décode et vérifie un jeton. Renvoie null s'il est invalide ou expiré, sinon { actor, expiresAt, role }. */
-function decodeSessionToken(token: string | undefined | null): { actor: string; expiresAt: number; role: Role } | null {
+function decodeSessionToken(token: string | undefined | null): { actor: string; expiresAt: number; role: Role; sid?: string } | null {
   const parsed = parseToken(token);
   if (!parsed) return null;
 
@@ -40,7 +43,7 @@ function decodeSessionToken(token: string | undefined | null): { actor: string; 
   } catch {
     // Ancien format de jeton (sans nom) : on retombe sur le nom par défaut.
   }
-  return { actor, expiresAt: parsed.expiresAt, role: parsed.role };
+  return { actor, expiresAt: parsed.expiresAt, role: parsed.role, sid: parsed.sid };
 }
 
 /** Vrai si le jeton est valide et non expiré. */
@@ -51,6 +54,11 @@ export function verifySessionToken(token: string | undefined | null): boolean {
 /** Nom de l'admin associé à ce jeton, ou null s'il est invalide ou expiré. */
 export function getSessionActor(token: string | undefined | null): string | null {
   return decodeSessionToken(token)?.actor ?? null;
+}
+
+/** Identifiant de session (révocation) du jeton, ou null s'il est invalide, expiré ou d'un ancien format. */
+export function getSessionSid(token: string | undefined | null): string | null {
+  return decodeSessionToken(token)?.sid ?? null;
 }
 
 /** Rôle du jeton, ou null s'il est invalide ou expiré. */

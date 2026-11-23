@@ -11,6 +11,8 @@ import { loadControls } from "@/modules/system/controls";
 import { statusLabel, statusTone, lineRatio } from "@/modules/treasury/asset-view";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatNumber, formatUsd, formatPct } from "@/core/format";
 import { PageHeader, Section, Pill, CoverageBar, ErrorNote, type Tone } from "@/components/ui";
+import { can } from "@/core/auth/session";
+import RestrictedHome from "@/components/restricted-home";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +25,8 @@ type Todo = { tone: Tone; text: string; href: string; usd?: number };
 const ORDER: Record<Tone, number> = { bad: 0, warn: 1, info: 2, ok: 3 };
 
 export default async function TodayPage() {
+  // L'accueil financier (couverture, résultat, trésorerie) est réservé aux rôles qui ont le droit de voir l'argent.
+  if (!can("finance.read")) return <RestrictedHome />;
   const db = getSupabaseAdmin();
   const now = Date.now();
   const since24h = new Date(now - DAY).toISOString();

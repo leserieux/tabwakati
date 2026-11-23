@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import type { Icon } from "@/components/ui";
+import { canAccess } from "@/core/auth/page-access";
 
 type IconName = ComponentProps<typeof Icon>["name"];
 export interface Tab { href: string; label: string }
@@ -68,6 +69,18 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/settings", label: "Paramètres" }
   ] }
 ];
+
+/**
+ * Menu visible pour un rôle : les onglets non permis disparaissent ; une entrée sans aucun onglet permis disparaît ;
+ * l'entrée pointe vers son premier onglet permis. (L'accès réel est refusé par le middleware, ceci n'est que l'affichage.)
+ */
+export function filterNav(role: string | null | undefined): NavEntry[] {
+  return NAV.flatMap((entry) => {
+    if (!entry.tabs) return canAccess(role, entry.href) ? [entry] : [];
+    const tabs = entry.tabs.filter((t) => canAccess(role, t.href));
+    return tabs.length > 0 ? [{ ...entry, href: tabs[0].href, tabs }] : [];
+  });
+}
 
 export function matches(pathname: string, href: string, exact = false): boolean {
   return pathname === href || (!exact && pathname.startsWith(`${href}/`));

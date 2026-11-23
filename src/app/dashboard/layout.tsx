@@ -13,5 +13,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
-  return <DashboardShell actor={getSessionActor(token)} readOnly={getSessionRole(token) === "viewer"}><div><SectionTabs />{children}</div></DashboardShell>;
+  const role = getSessionRole(token);
+  return <DashboardShell actor={getSessionActor(token)} role={role} readOnly={role === "viewer"}><div><SectionTabs role={role} />{children}</div></DashboardShell>;
 }

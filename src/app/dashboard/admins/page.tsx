@@ -3,7 +3,8 @@ import { can } from "@/core/auth/session";
 import { ROLE_LABELS } from "@/core/auth/permissions";
 import { formatDateTime } from "@/core/format";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
-import { createAdmin, setAdminActive, resetAdminPassword } from "./actions";
+import { countActiveSessions } from "@/core/auth/sessions";
+import { createAdmin, setAdminActive, resetAdminPassword, revokeAdminSessions } from "./actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export default async function AdminsPage({ searchParams }: { searchParams?: { sa
     );
   }
   const res = await q<Admin>(getSupabaseAdmin().from("admin_users").select("username, display_name, role, is_active, last_login_at, locked_until, created_by, created_at").order("created_at"));
+  const sessions = await countActiveSessions().catch(() => ({} as Record<string, number>));
 
   return (
     <div>
@@ -30,7 +32,7 @@ export default async function AdminsPage({ searchParams }: { searchParams?: { sa
       <Section title="Comptes" hint="Après avoir créé les comptes nominatifs, mets ADMIN_LEGACY_LOGIN=off sur Vercel pour couper l'ancien mot de passe partagé.">
         {res.rows.length === 0 ? <Empty text="Aucun compte nominatif : l'ancien mot de passe partagé est toujours le seul accès." /> : (
           <TableWrap>
-            <thead><tr><Th>Identifiant</Th><Th>Rôle</Th><Th>État</Th><Th hideSm>Dernière connexion</Th><Th>Actions</Th></tr></thead>
+            <thead><tr><Th>Identifiant</Th><Th>Rôle</Th><Th>État</Th><Th hideSm>Dernière connexion</Th><Th hideSm>Sessions actives</Th><Th>Actions</Th></tr></thead>
             <tbody>
               {res.rows.map((a) => {
                 const locked = a.locked_until && new Date(a.locked_until).getTime() > Date.now();
@@ -40,7 +42,12 @@ export default async function AdminsPage({ searchParams }: { searchParams?: { sa
                     <Td label="Rôle">{ROLE_LABELS[a.role] ?? a.role}</Td>
                     <Td label="État"><Pill tone={!a.is_active ? "bad" : locked ? "warn" : "ok"}>{!a.is_active ? "Désactivé" : locked ? "Verrouillé" : "Actif"}</Pill></Td>
                     <Td hideSm label="Dernière connexion">{a.last_login_at ? formatDateTime(new Date(a.last_login_at)) : "Jamais"}</Td>
+                    <Td hideSm label="Sessions actives">{sessions[a.username] ?? 0}</Td>
                     <Td label="Actions">
+                      <form action={revokeAdminSessions} style={{ display: "inline", marginRight: 8 }}>
+                        <input type="hidden" name="username" value={a.username} />
+                        <button type="submit" className="wk-submit-sm">Déconnecter partout</button>
+                      </form>
                       <form action={setAdminActive} style={{ display: "inline" }}>
                         <input type="hidden" name="username" value={a.username} />
                         <input type="hidden" name="active" value={a.is_active ? "false" : "true"} />

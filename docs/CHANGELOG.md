@@ -5,6 +5,28 @@ Historique chronologique (le plus récent en haut) repris tel quel de l'ancien R
 > **Chemins** : les entrées antérieures au 2026-11-22 citent les anciens chemins (`lib/solvency.ts`, `lib/custody-plan`, `lib/metrics/rules.ts`…).
 > Depuis la refonte, tout est sous `src/` rangé par domaine : voir le tableau « ancien chemin → nouveau chemin » dans [ARCHITECTURE.md](ARCHITECTURE.md#correspondance-des-anciens-chemins).
 
+## 2026-11-23 : phase 2, sécurité et rôles
+
+- **Accès par page** : `core/auth/page-access.ts` (matrice page × permission, préfixe le plus long, refus par défaut, chemins ambigus refusés). Appliquée par le middleware à `/dashboard/*` **et à `/api/*`** (avant, les routes API ne dépendaient que de leur propre garde). Nouvelles permissions `exports.run` (finance, risque) et `settings.manage` (super-admin). Menu, onglets et accueil filtrés par rôle ; page `/dashboard/forbidden`.
+- **Sessions révocables** : table `admin_sessions`, identifiant de session dans le jeton, vérification Edge avec cache de 30 s, révocation à la déconnexion, à la désactivation ou au changement de mot de passe d'un compte, et par « Déconnecter partout ». La connexion échoue (503) plutôt que d'émettre un jeton irrévocable si la session ne peut pas être enregistrée. Les anciens jetons (sans identifiant) restent valides jusqu'à leur expiration (12 h max).
+- **Connexion** : 10 échecs en 15 minutes depuis une même IP bloquent les tentatives suivantes (429), en plus du verrouillage par compte.
+- **Restriction par IP** (option `ADMIN_IP_ALLOWLIST`) : applique la liste à la console, à `/login` et à l'API ; `/api/cron/*` y échappe (protégée par `CRON_SECRET`).
+- **Journal d'audit** : chaînage SHA-256 (migration `20261123095557`), historique repris sans modifier son contenu, `fn_admin_audit_verify()`, contrôle horaire avec alerte critique en cas de rupture.
+- **Tests** : 62 → 91.
+- **Reporté volontairement** : 2FA, retraits (file de validation, retrait manuel) ; **reste à faire** : double validation des actions sensibles (collecte réelle, fermeture forcée des futures, burn, frais).
+
+---
+
+## 2026-11-22 : phase 1, mise en route et filet de sécurité
+
+- **Vérifié** : `npm install`, typecheck, 62 tests et build de production passent. `package-lock.json` régénéré (l'ancien ne contenait pas vitest : `npm ci` échouait).
+- **CI** : `.github/workflows/ci.yml` (typecheck, lint, tests, build) sur chaque Pull Request et sur `main`.
+- **Lint** : ESLint (`next/core-web-vitals` + règles TypeScript) et Prettier. Baseline : 0 erreur, 275 avertissements (dont 240 `any`) ; `npm run lint` échoue au-delà. Règle `react/no-unescaped-entities` désactivée (135 apostrophes françaises dans le texte, sans risque).
+- **Schéma** : 5 migrations versionnées dans `supabase/migrations/` (numéros identiques à la base). Le reste via `supabase db pull`.
+- **À supprimer du dépôt** : `middleware.ts` à la racine (ancienne version qui ne vérifie que la présence du cookie ; Next utilise `src/middleware.ts`, vérifié dans le build), `pubspec.yaml` (reste de l'app Flutter), `tsconfig.tsbuildinfo` (déjà dans `.gitignore`).
+
+---
+
 ## 2026-11-22 : refonte structurelle (v0.3.0)
 
 - **Structure** : code dans `src/`, rangé par domaine (`core/`, `modules/treasury|operations|users|revenue|products|wakati|system|metrics`). L'app mobile Flutter (qui partageait le dossier `lib/`) vit désormais dans `mobile/`. Les URL du dashboard ne changent pas.
