@@ -7,6 +7,7 @@ import { formatNumber, formatToken, formatUsd, formatPct, formatDateTime } from 
 import { PageHeader, Section, TableWrap, Th, Td, Pill, CoverageBar, Empty, ErrorNote, Icon } from "@/components/ui";
 import Link from "next/link";
 import { adjustLiquidity } from "./actions";
+import { refusalKind, KIND_LABEL } from "@/modules/treasury/refusals-core";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -219,7 +220,7 @@ export default async function LiquidityPage({
         .from("asset_liquidity_events")
         .select("id, asset_symbol, user_id, from_asset, from_amount, requested_amount, reserve_amount, shortfall_amount, shortfall_usd, created_at")
         .order("created_at", { ascending: false })
-        .limit(15)
+        .limit(30)
     ),
     q<LedgerRow>(
       db
@@ -382,17 +383,19 @@ export default async function LiquidityPage({
         )}
       </Section>
 
-      <Section title="Swaps refusés pour manque de liquidité" hint="Un swap est refusé quand la réserve de l'actif à verser ne le couvre pas (valable pour tous les actifs, WAKATI compris). Les 15 derniers refus.">
+      <div id="refus" />
+      <Section title="Échanges refusés pour manque de liquidité" hint="Un échange est refusé quand la caisse n'a pas assez de l'actif à verser (swaps, ventes et achats de WAKATI). L'utilisateur n'est pas débité : c'est une vente manquée. Pour y remédier, ajoute l'actif en manque avec « Ajuster une réserve » plus bas. Les 30 derniers refus.">
         {shortageEventsRes.error ? (
-          <ErrorNote text={`Refus illisibles : ${shortageEventsRes.error}. La migration 20261029_asset_liquidity_tracking.sql est-elle appliquée ?`} />
+          <ErrorNote text={`Refus illisibles : ${shortageEventsRes.error}.`} />
         ) : shortageEventsRes.rows.length === 0 ? (
-          <Empty text="Aucun swap refusé." />
+          <Empty text="Aucun échange refusé." />
         ) : (
           <TableWrap>
             <thead>
               <tr>
                 <Th>Date</Th>
-                <Th>Actif à verser</Th>
+                <Th hideSm>Type</Th>
+                <Th>Actif en manque</Th>
                 <Th>Utilisateur</Th>
                 <Th right hideSm>Il donnait</Th>
                 <Th right>Demandé</Th>
@@ -404,7 +407,8 @@ export default async function LiquidityPage({
               {shortageEventsRes.rows.map((e) => (
                 <tr key={e.id}>
                   <Td label="Date">{formatDateTime(new Date(e.created_at))}</Td>
-                  <Td label="Actif à verser">{e.asset_symbol}</Td>
+                  <Td hideSm label="Type">{KIND_LABEL[refusalKind(e)]}</Td>
+                  <Td label="Actif en manque">{e.asset_symbol}{shortageStateRes.rows.some((st) => st.asset_symbol === e.asset_symbol) && <div><Pill tone="bad">Toujours bloqué</Pill></div>}</Td>
                   <Td label="Utilisateur"><Link href={`/dashboard/users/${e.user_id}`}>{String(e.user_id).slice(0, 8)}…</Link></Td>
                   <Td right label="Il donnait" hideSm>{formatNumber(Number(e.from_amount))} {e.from_asset}</Td>
                   <Td right label="Demandé">{formatNumber(Number(e.requested_amount))}</Td>

@@ -15,10 +15,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function PricePage({ searchParams }: { searchParams: SettingsParams }) {
-  const [w, wakatiState, shortages] = await Promise.all([
+  const [w, wakatiState, shortages, shortStates] = await Promise.all([
     loadWakati(),
     q<any>(getSupabaseAdmin().from("wakati_reserve_state").select("*").eq("id", 1).limit(1)),
-    q<any>(getSupabaseAdmin().from("wakati_liquidity_events").select("id, user_id, requested_wakati, requested_usd, reserve_usd, shortfall_usd, created_at").order("created_at", { ascending: false }).limit(10))
+    // Les refus sont suivis pour tous les actifs dans asset_liquidity_events (ex-wakati_liquidity_events) :
+    // une vente de WAKATI refusée = ligne dont l'actif payé (from_asset) est WAKATI ; asset_symbol = l'actif en manque.
+    q<any>(getSupabaseAdmin().from("asset_liquidity_events").select("id, user_id, asset_symbol, from_amount, requested_usd, reserve_usd, shortfall_usd, created_at").eq("from_asset", "WAKATI").order("created_at", { ascending: false }).limit(10)),
+    q<any>(getSupabaseAdmin().from("asset_liquidity_state").select("asset_symbol, liquidity_shortage_since").eq("liquidity_shortage", true).order("asset_symbol"))
   ]);
   const ws = wakatiState.rows[0];
   const shortageRows = shortages.rows;
@@ -33,11 +36,11 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
     <div>
       <SettingsMessages searchParams={searchParams} />
       {w.errors.length > 0 && <div className="wk-alert-bad">Certaines données n'ont pas pu être lues : {w.errors.join(" · ")}</div>}
-      {shortages.error && <div className="wk-alert-bad">Ventes refusées : lecture impossible ({shortages.error}). La migration 20261028_wakati_sale_drains_price_reserve.sql est-elle appliquée ?</div>}
-      {ws?.liquidity_shortage && (
+      {shortages.error && <div className="wk-alert-bad">Ventes refusées : lecture impossible ({shortages.error}).</div>}
+      {shortStates.rows.length > 0 && (
         <div className="wk-callout wk-callout-warn" style={{ marginBottom: 16 }}>
-          <strong>Manque de liquidité.</strong> La réserve du prix ne couvre plus les ventes de WAKATI
-          {ws.liquidity_shortage_since ? <> depuis le {formatDateTime(new Date(ws.liquidity_shortage_since))}</> : null}. Les ventes trop grosses sont refusées et signalées à l'utilisateur. Le signal disparaît dès que la réserve remonte (calcul quotidien).
+          <strong>Manque de liquidité.</strong> La caisse n'a plus assez de {shortStates.rows.map((r: any) => r.asset_symbol).join(", ")} pour payer les ventes de WAKATI
+          {shortStates.rows[0].liquidity_shortage_since ? <> (depuis le {formatDateTime(new Date(shortStates.rows[0].liquidity_shortage_since))})</> : null}. Les ventes trop grosses sont refusées et signalées à l'utilisateur. Le signal disparaît dès que la caisse remonte. Détail sur la page Liquidité.
         </div>
       )}
 
@@ -133,7 +136,7 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
         )}
       </Section>
 
-      <Section title="Ventes refusées pour manque de liquidité" hint="Une vente de WAKATI vide la réserve de sa valeur en USD ; si la réserve ne suffit pas, la vente est refusée. Les 10 derniers refus. Les achats n'alimentent pas la réserve.">
+      <Section title="Ventes refusées pour manque de liquidité" hint="Quand un utilisateur vend du WAKATI contre un actif, la caisse doit avoir assez de cet actif ; sinon la vente est refusée. Les 10 derniers refus. Tous les échanges refusés (autres actifs compris) sont sur la page Liquidité des échanges.">
         {shortageRows.length === 0 ? (
           <Empty text="Aucune vente refusée." />
         ) : (
@@ -142,9 +145,10 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
               <tr>
                 <Th>Date</Th>
                 <Th>Utilisateur</Th>
-                <Th right>WAKATI demandés</Th>
+                <Th right>WAKATI vendus</Th>
+                <Th>Actif en manque</Th>
                 <Th right>Valeur</Th>
-                <Th right>Réserve à ce moment</Th>
+                <Th right>Caisse à ce moment</Th>
                 <Th right>Manque</Th>
               </tr>
             </thead>
@@ -153,9 +157,10 @@ export default async function PricePage({ searchParams }: { searchParams: Settin
                 <tr key={e.id}>
                   <Td label="Date">{formatDateTime(new Date(e.created_at))}</Td>
                   <Td label="Utilisateur"><Link href={`/dashboard/users/${e.user_id}`}>{String(e.user_id).slice(0, 8)}…</Link></Td>
-                  <Td right label="WAKATI demandés">{formatToken(Number(e.requested_wakati))}</Td>
+                  <Td right label="WAKATI vendus">{formatToken(Number(e.from_amount))}</Td>
+                  <Td label="Actif en manque">{String(e.asset_symbol)}</Td>
                   <Td right label="Valeur">{formatUsd(Number(e.requested_usd))}</Td>
-                  <Td right label="Réserve à ce moment">{formatUsd(Number(e.reserve_usd))}</Td>
+                  <Td right label="Caisse à ce moment">{formatUsd(Number(e.reserve_usd))}</Td>
                   <Td right label="Manque"><span className="wk-neg">{formatUsd(Number(e.shortfall_usd))}</span></Td>
                 </tr>
               ))}

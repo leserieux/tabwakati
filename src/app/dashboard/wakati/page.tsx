@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 const REWARD_TYPES = ["game_win", "referral_bonus", "staking_reward"];
 
 const FLOW_LABELS: Record<string, string> = {
-  buy_wakati: "Achats de WAKATI dans l'appli",
+  buy_wakati: "Achats directs de WAKATI",
+  swap_credit: "Achats par swap (actif → WAKATI)",
+  swap_debit: "Ventes par swap (WAKATI → actif)",
   stake: "Mis en staking",
   unstake: "Retirés du staking",
   game_win: "Gains aux jeux",
@@ -52,6 +54,9 @@ export default async function TokenomicsPage() {
 
   const flowRows: { label: string; count: number; total: number; sub?: boolean }[] = [
     { label: FLOW_LABELS.buy_wakati, count: cnt(["buy_wakati"]), total: sum(["buy_wakati"]) },
+    // Depuis novembre, l'essentiel des achats passe par le swap : lignes swap_credit / swap_debit en WAKATI.
+    { label: FLOW_LABELS.swap_credit, count: cnt(["swap_credit"]), total: sum(["swap_credit"]) },
+    { label: FLOW_LABELS.swap_debit, count: cnt(["swap_debit"]), total: sum(["swap_debit"]) },
     { label: FLOW_LABELS.stake, count: cnt(["stake"]), total: sum(["stake"]) },
     { label: FLOW_LABELS.unstake, count: cnt(["unstake"]), total: sum(["unstake"]) },
     { label: "Récompenses distribuées", count: cnt(REWARD_TYPES), total: rewards },
