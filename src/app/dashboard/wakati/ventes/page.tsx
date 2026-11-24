@@ -17,6 +17,7 @@ type Sale = {
   usd: number; // valeur de ce qui a été payé (hors frais)
   feeUsd: number;
   estimated: boolean; // valorisé au prix actuel (prix de l'époque non enregistré)
+  source: "achat" | "swap"; // achat direct (buy_wakati, 0,5 %) ou swap vers WAKATI (2 %)
 };
 
 type Agg = { count: number; base: number; fee: number; usd: number; feeUsd: number; wakati: number; last: string };
@@ -28,9 +29,13 @@ function add(a: Agg, s: Sale) {
 
 export default async function SalesPage() {
   const db = getSupabaseAdmin();
-  const [salesRes, prices, treasury, fees, reserve] = await Promise.all([
+  const [directRes, swapRes, prices, treasury, fees, reserve] = await Promise.all([
     fetchAll<any>((from, to) =>
       db.from("transactions").select("id, user_id, amount, created_at, metadata").eq("type", "buy_wakati").eq("status", "completed").order("created_at", { ascending: false }).order("id").range(from, to)
+    ),
+    // Depuis novembre, la plupart des achats de WAKATI passent par le swap (actif -> WAKATI) : ligne swap_credit en WAKATI.
+    fetchAll<any>((from, to) =>
+      db.from("transactions").select("id, user_id, amount, fee, created_at, metadata").eq("type", "swap_credit").eq("asset_symbol", "WAKATI").eq("status", "completed").order("created_at", { ascending: false }).order("id").range(from, to)
     ),
     loadPrices(),
     q<any>(db.from("treasury_wallets").select("asset_symbol, balance, total_collected").order("asset_symbol")),
@@ -39,7 +44,7 @@ export default async function SalesPage() {
   ]);
 
   const unpriced = new Set<string>();
-  const sales: Sale[] = salesRes.rows.map((r) => {
+  const direct: Sale[] = directRes.rows.map((r) => {
     const m = r.metadata || {};
     const asset = String(m.from_asset || "?");
     const base = Number(m.base_amount || 0);
@@ -49,8 +54,31 @@ export default async function SalesPage() {
     if (!hasUsd && !price) unpriced.add(asset);
     const usd = hasUsd ? Number(m.usd_value) : price ? base * price : 0;
     const feeUsd = base > 0 ? (usd * fee) / base : 0;
-    return { id: r.id, user_id: r.user_id, created_at: r.created_at, asset, base, fee, wakati: Number(r.amount || 0), usd, feeUsd, estimated: !hasUsd };
+    return { id: r.id, user_id: r.user_id, created_at: r.created_at, asset, base, fee, wakati: Number(r.amount || 0), usd, feeUsd, estimated: !hasUsd, source: "achat" as const };
   });
+
+  // Swaps vers WAKATI. Le frais (2 %) est prélevé sur le WAKATI reçu : amount = WAKATI net crédité, fee = frais en WAKATI,
+  // from_amount = ce que l'utilisateur a payé en tout. On ramène le frais dans l'actif payé (fee / taux) pour comparer aux achats directs.
+  const swaps: Sale[] = [];
+  for (const r of swapRes.rows) {
+    const m = r.metadata || {};
+    const asset = String(m.from_asset || "");
+    if (!asset || asset === "WAKATI") continue; // le crédit WAKATI vient d'un autre actif uniquement
+    const paid = Number(m.from_amount || 0);
+    const rate = Number(m.exchange_rate || 0);
+    const feeWakati = Number(r.fee || 0);
+    const fee = rate > 0 ? feeWakati / rate : 0;
+    const base = Math.max(0, paid - fee);
+    const price = prices.get(asset);
+    if (!price) unpriced.add(asset);
+    const usd = price ? base * price : 0;
+    const feeUsd = price ? fee * price : 0;
+    swaps.push({ id: r.id, user_id: r.user_id, created_at: r.created_at, asset, base, fee, wakati: Number(r.amount || 0), usd, feeUsd, estimated: true, source: "swap" });
+  }
+
+  const sales: Sale[] = [...direct, ...swaps].sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  const swapFeeUsd = swaps.reduce((n, s) => n + s.feeUsd, 0);
+  const directFeeUsd = direct.reduce((n, s) => n + s.feeUsd, 0);
 
   const total = emptyAgg();
   const byAsset = new Map<string, Agg>();
@@ -79,21 +107,21 @@ export default async function SalesPage() {
   const reserveUsd = reserve.rows[0] ? Number(reserve.rows[0].reserve_usd) : null;
   const wakatiPrice = prices.get("WAKATI") ?? 0;
   const purchaseFees = fees.byType.find((t) => t.key === "wakati_purchase_fee");
-  const errors = [salesRes.error, treasury.error, fees.error, reserve.error, usersRes.error, unpriced.size ? `sans prix valide : ${[...unpriced].join(", ")}` : null].filter(Boolean).join(" · ");
+  const errors = [directRes.error, swapRes.error, treasury.error, fees.error, reserve.error, usersRes.error, unpriced.size ? `sans prix valide : ${[...unpriced].join(", ")}` : null].filter(Boolean).join(" · ");
 
   return (
     <div>
       <ErrorNote text={errors ? `Certaines données sont incomplètes : ${errors}` : null} />
 
       <div className="wk-strip">
-        <StatCard label="Argent encaissé (ventes)" value={formatCompactUsd(total.usd)} sub={`${total.count} achat(s), hors frais`} />
+        <StatCard label="Argent encaissé (ventes)" value={formatCompactUsd(total.usd)} sub={`${total.count} achat(s) dont ${swaps.length} par swap, hors frais`} />
         <StatCard label="WAKATI vendus" value={formatToken(total.wakati)} sub={`≈ ${formatUsd(total.wakati * wakatiPrice)} au prix actuel`} />
-        <StatCard label="Frais d'achat encaissés" value={formatUsd(purchaseFees?.usd ?? total.feeUsd)} sub="0,5 % de chaque achat" />
+        <StatCard label="Frais d'achat encaissés" value={formatUsd((purchaseFees?.usd ?? directFeeUsd) + swapFeeUsd)} sub="0,5 % (achat direct) ou 2 % (swap)" />
         <StatCard label="Acheteurs" value={String(byUser.size)} sub={total.last ? `Dernier achat : ${formatDateTime(new Date(total.last))}` : "Aucun achat"} />
       </div>
       {estimatedCount > 0 && (
         <p className="wk-hint" style={{ marginBottom: 16 }}>
-          {estimatedCount} achat(s) sur {sales.length} datent d'avant l'enregistrement du prix : ils sont valorisés au prix actuel de l'actif (estimation). Les nouveaux achats gardent leur prix exact.
+          {estimatedCount} achat(s) sur {sales.length} sont valorisés au prix actuel de l'actif (estimation) : les anciens achats directs (prix de l'époque non enregistré) et tous les swaps vers WAKATI. Les achats directs récents gardent leur prix exact.
         </p>
       )}
 
@@ -209,6 +237,7 @@ export default async function SalesPage() {
               <tr>
                 <Th>Date</Th>
                 <Th>Utilisateur</Th>
+                <Th hideSm>Type</Th>
                 <Th right>Payé</Th>
                 <Th right hideSm>Frais</Th>
                 <Th right>WAKATI reçus</Th>
@@ -219,6 +248,7 @@ export default async function SalesPage() {
                 <tr key={s.id}>
                   <Td label="Date">{formatDateTime(new Date(s.created_at))}</Td>
                   <Td label="Utilisateur">{who(s.user_id)}</Td>
+                  <Td hideSm label="Type">{s.source === "swap" ? "Swap" : "Achat direct"}</Td>
                   <Td right label="Payé">{formatNumber(s.base)} <span className="wk-asset-sub">{s.asset}</span></Td>
                   <Td right hideSm label="Frais">{formatNumber(s.fee)} <span className="wk-asset-sub">{s.asset}</span></Td>
                   <Td right label="WAKATI reçus">{formatToken(s.wakati)}</Td>
