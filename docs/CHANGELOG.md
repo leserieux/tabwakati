@@ -12,8 +12,9 @@ Historique chronologique (le plus récent en haut) repris tel quel de l'ancien R
 - **Connexion** : 10 échecs en 15 minutes depuis une même IP bloquent les tentatives suivantes (429), en plus du verrouillage par compte.
 - **Restriction par IP** (option `ADMIN_IP_ALLOWLIST`) : applique la liste à la console, à `/login` et à l'API ; `/api/cron/*` y échappe (protégée par `CRON_SECRET`).
 - **Journal d'audit** : chaînage SHA-256 (migration `20261123095557`), historique repris sans modifier son contenu, `fn_admin_audit_verify()`, contrôle horaire avec alerte critique en cas de rupture.
-- **Tests** : 62 → 91.
-- **Reporté volontairement** : 2FA, retraits (file de validation, retrait manuel) ; **reste à faire** : double validation des actions sensibles (collecte réelle, fermeture forcée des futures, burn, frais).
+- **Tests** : 62 → 109.
+- **Double validation** (`src/core/approvals/`, migration `20261123212649`) : six actions sensibles exigent un **motif** (tracé dans le journal d'audit) ; avec `ADMIN_DUAL_CONTROL=on`, elles sont d'abord **demandées** puis **validées par un second super-admin nominatif** (page Système › Validations, expiration 24 h). La base garantit que le validateur est un autre compte nominatif actif (`fn_admin_decide_approval`), qu'une demande validée n'est exécutée qu'une fois (`fn_admin_claim_approval`) et qu'elle est rejouée avec les valeurs enregistrées, jamais celles d'un navigateur (contexte serveur privé). L'accès partagé historique ne compte jamais comme une personne.
+- **Reporté volontairement** : 2FA et retraits (file de validation, retrait manuel). **Hors périmètre de la double validation pour l'instant** : fermeture d'une seule position, frais des actifs / Campay / prêts (page Réglages), collecte de trésorerie.
 
 ---
 

@@ -5,13 +5,16 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/core/db/data";
 import { diffFields, getCurrentActor, logAdminAction, type AuditChange } from "@/core/audit";
+import { gateForm, gateRedirect } from "@/core/approvals/gate";
 
 const PATH = "/dashboard/wakati/burns";
 const back = (kind: "saved" | "error", msg: string): never => redirect(`${PATH}?${kind}=1&msg=${encodeURIComponent(msg)}`);
 
 /** Lance tout de suite le passage de burn (le même que la tâche quotidienne de 00:20 UTC). Sous le seuil de prix, il ne brûle rien. */
-export async function burnNow() {
+export async function burnNow(formData: FormData) {
   assertCanWrite();
+  const gate = await gateForm("wakati.burn_now", formData);
+  if (gate.kind !== "proceed") gateRedirect(PATH, gate);
   const db = getSupabaseAdmin();
   const { data, error } = await db.rpc("fn_run_burn", { p_force: false });
   const res = data as { success?: boolean; status?: string; wakati_burned?: number; note?: string } | null;
@@ -84,6 +87,8 @@ export async function updateBurnSettings(formData: FormData) {
     updated_by: getCurrentActor()
   };
   if (errors.length > 0) back("error", errors.join(" "));
+  const gate = await gateForm("wakati.burn_settings", formData);
+  if (gate.kind !== "proceed") gateRedirect(PATH, gate);
   await saveSettings({ table: "burn_settings", id: 1, action: "burn.settings.update", summary: "Réglages du burn", patch });
 }
 
@@ -98,5 +103,7 @@ export async function updateReserveSettings(formData: FormData) {
     is_active: formData.get("is_active") === "on"
   };
   if (errors.length > 0) back("error", errors.join(" "));
+  const gate = await gateForm("wakati.reserve_settings", formData);
+  if (gate.kind !== "proceed") gateRedirect(PATH, gate);
   await saveSettings({ table: "wakati_reserve_state", id: 1, action: "settings.wakati_reserve_state.update", summary: "Caisse et prix du WAKATI", patch });
 }

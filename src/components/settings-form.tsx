@@ -81,7 +81,17 @@ export function Toggle({ label, name, defaultChecked }: { label: string; name: s
   );
 }
 
-export function SettingsCard({ title, hint, updatedAt, headerExtra, action, returnTo, children }: { title: string; hint: string; updatedAt?: string | null; headerExtra?: React.ReactNode; action: (formData: FormData) => void; returnTo?: string; children: React.ReactNode }) {
+/** Motif d'une action sensible : obligatoire, tracé dans le journal d'audit (et dans la demande de validation si elle est active). */
+export function ReasonField({ id = "reason" }: { id?: string }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <label className="wk-label" htmlFor={id}>Motif (obligatoire)</label>
+      <input id={id} name="reason" type="text" required minLength={5} maxLength={300} autoComplete="off" className="wk-input" placeholder="Pourquoi cette modification ? (visible dans le journal d'audit)" />
+    </div>
+  );
+}
+
+export function SettingsCard({ title, hint, updatedAt, headerExtra, action, returnTo, requireReason = false, children }: { title: string; hint: string; updatedAt?: string | null; headerExtra?: React.ReactNode; action: (formData: FormData) => void; returnTo?: string; requireReason?: boolean; children: React.ReactNode }) {
   return (
     <div className="wk-settings-card">
       <div className="wk-settings-head">
@@ -97,6 +107,7 @@ export function SettingsCard({ title, hint, updatedAt, headerExtra, action, retu
       <form action={action}>
         {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <div className="wk-form-grid">{children}</div>
+        {requireReason && <ReasonField id={`reason-${title}`} />}
         <button type="submit" className="wk-submit-sm">Enregistrer</button>
       </form>
     </div>
@@ -104,10 +115,11 @@ export function SettingsCard({ title, hint, updatedAt, headerExtra, action, retu
 }
 
 /** Messages « enregistré » / « échec » affichés après une sauvegarde (query string posée par les actions). */
-export function SettingsMessages({ searchParams }: { searchParams?: { saved?: string; error?: string; msg?: string } }) {
+export function SettingsMessages({ searchParams }: { searchParams?: { saved?: string; error?: string; msg?: string; pending?: string } }) {
   if (!searchParams) return null;
   return (
     <>
+      {searchParams.pending && <div className="wk-alert-ok">{searchParams.pending}</div>}
       {searchParams.saved && <div className="wk-alert-ok">{searchParams.saved} enregistré.</div>}
       {searchParams.error && (
         <div className="wk-alert-bad">

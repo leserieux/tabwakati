@@ -53,6 +53,7 @@ Modèle complet commenté : [`.env.example`](.env.example). Sur Vercel : *Settin
 | `ADMIN_PASSWORD` | oui | Accès partagé « admin » (ancien mode) |
 | `ADMIN_VIEWER_PASSWORD` | non | Second mot de passe, accès en lecture seule |
 | `ADMIN_LEGACY_LOGIN` | non | `off` interdit l'accès partagé (comptes nominatifs seulement) |
+| `ADMIN_DUAL_CONTROL` | non | `on` active la double validation des actions sensibles (2 super-admins nominatifs minimum) |
 | `ADMIN_IP_ALLOWLIST` | non | IP (ou plages IPv4) autorisées à ouvrir la console ; vide = pas de restriction |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | oui | Base de données (clé serveur, jamais exposée au navigateur) |
 | `CRON_SECRET` | oui | Autorise la tâche planifiée `/api/cron/*` |
@@ -122,11 +123,11 @@ Objectif : qu'aucun compte ne puisse faire plus que son métier, et que rien de 
 - [x] Limitation de tentatives de connexion par IP (10 échecs en 15 minutes) en plus du verrouillage par compte (5 échecs)
 - [x] Sessions révocables : table `admin_sessions`, « Déconnecter partout » par compte, fermeture automatique à la désactivation ou au changement de mot de passe, révocation effective en 30 s ; jeton de 12 h conservé (la révocation le rend sûr)
 - [ ] Authentification à deux facteurs (TOTP), obligatoire pour les rôles finance et super-admin *(reporté volontairement)*
-- [ ] **Motif obligatoire** et **double validation** (quatre yeux) au-dessus d'un seuil : collecte réelle, fermeture forcée des futures, burn, changement des frais *(retrait manuel : reporté avec la file de retraits)*. Déjà fait : motif obligatoire pour geler un compte, clore un signal de risque, rejeter un KYC
+- [x] **Motif obligatoire** et **double validation** (quatre yeux) : fermer toutes les positions futures, réglages futures (frais, marges, plafonds), passage de burn, réglages du burn, caisse et prix du WAKATI, balayage réel des dépôts. Page Système › Validations ; interrupteur `ADMIN_DUAL_CONTROL=on` (à activer quand deux super-admins nominatifs existent). Hors périmètre pour l'instant : fermeture d'une seule position, frais des actifs/Campay/prêts dans Réglages, collecte de trésorerie, retraits
 - [x] Journal d'audit infalsifiable : écriture seule **et** chaînage par empreinte SHA-256 (`fn_admin_audit_verify()`, contrôle horaire, alerte critique si la chaîne est rompue)
 - [x] Restriction par IP pour l'accès à la console (option `ADMIN_IP_ALLOWLIST`)
 
-**Terminé quand** : un compte « support » ne peut ni voir la trésorerie ni exporter *(fait, testé)* ; une action sensible exige un motif et une seconde personne *(reste à faire)* ; le journal d'audit ne peut plus être modifié *(fait, testé)*.
+**Terminé quand** : un compte « support » ne peut ni voir la trésorerie ni exporter *(fait, testé)* ; une action sensible exige un motif et une seconde personne *(fait, testé ; à activer avec `ADMIN_DUAL_CONTROL=on`)* ; le journal d'audit ne peut plus être modifié *(fait, testé)*.
 
 ### Phase 3 : fiabilité des chiffres et performance
 

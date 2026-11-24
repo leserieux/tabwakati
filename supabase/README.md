@@ -2,7 +2,7 @@
 
 Ce dossier doit contenir le **schéma SQL réel** du projet (tables, vues `admin_*`, fonctions, politiques). Le code du dashboard en dépend et la règle du projet est : *le schéma versionné est la source de vérité*.
 
-> ⚠️ **Le schéma complet est encore incomplet ici.** Seules les 6 migrations des 22 et 23 novembre 2026 sont versionnées (comptes admin et rôles, gel de compte, idempotence, grand livre des soldes, fonctions du dashboard, alertes). Les ~313 plus anciennes restent à rapatrier avec `supabase db pull` (ci-dessous). Les numéros de version de ces 5 fichiers sont ceux de la base, pour que `db pull` ne crée pas de doublon.
+> ⚠️ **Le schéma complet est encore incomplet ici.** Seules les 7 migrations des 22 et 23 novembre 2026 sont versionnées (comptes admin et rôles, gel de compte, idempotence, grand livre des soldes, fonctions du dashboard, alertes). Les ~313 plus anciennes restent à rapatrier avec `supabase db pull` (ci-dessous). Les numéros de version de ces 5 fichiers sont ceux de la base, pour que `db pull` ne crée pas de doublon.
 
 | Migration | Rôle |
 |---|---|
@@ -11,6 +11,7 @@ Ce dossier doit contenir le **schéma SQL réel** du projet (tables, vues `admin
 | `20261122183949_balance_ledger_shadow_mode` | Journal des mouvements de solde + contrôle `fn_balance_ledger_check()` |
 | `20261122185100_admin_dashboard_backend_core` | Recherche et fiche 360°, signaux de risque, KYC, centre d'alertes |
 | `20261122190233_schedule_admin_alerts_cron_and_close_staking_pools_anon` | Tâche planifiée des alertes, fermeture de `get_staking_pools` à anon |
+| `20261123212649_phase2_dual_control_approvals` | Table `admin_approvals` et fonctions de la double validation (demande, validation par un second compte, prise en charge unique, annulation, expiration) |
 | `20261123095557_phase2_sessions_audit_chain_permissions` | Sessions admin révocables, chaînage SHA-256 du journal d'audit, limitation de connexion par IP, permission `exports.run` |
 
 ## À faire (roadmap, phase 1)

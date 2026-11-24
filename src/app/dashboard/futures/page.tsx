@@ -1,7 +1,7 @@
 import { loadPrices } from "@/core/db/data";
 import { formatNumber, formatPct, formatDateTime, formatDate, formatUsd, shortId } from "@/core/format";
 import { PageHeader, Section, TableWrap, Th, Td, Pill, Empty, ErrorNote, SegmentBar, Swatch, type Tone } from "@/components/ui";
-import { Field, TextField, Toggle, SettingsCard, SettingsMessages } from "@/components/settings-form";
+import { Field, TextField, Toggle, SettingsCard, SettingsMessages, ReasonField } from "@/components/settings-form";
 import { ConfirmDeleteButton } from "@/app/dashboard/settings/ConfirmDeleteButton";
 import MoneyHero, { sg } from "./money-hero";
 import {
@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RETURN = "/dashboard/futures";
-type SettingsParams = { saved?: string; error?: string; msg?: string };
+type SettingsParams = { saved?: string; error?: string; msg?: string; pending?: string };
 
 const REASON: Record<string, { label: string; tone: Tone }> = {
   liquidation: { label: "Liquidée", tone: "bad" },
@@ -341,6 +341,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
               <label className="wk-label" htmlFor="confirm">Tapez FERMER pour confirmer</label>
               <input id="confirm" name="confirm" type="text" autoComplete="off" className="wk-input" placeholder="FERMER" />
             </div>
+            <div style={{ minWidth: 280 }}><ReasonField id="reason-close-all" /></div>
             <button type="submit" className="wk-submit-sm" style={{ background: "var(--bad)" }} disabled={o.positions === 0}>Fermer {o.positions} position(s)</button>
           </form>
         </div>
@@ -348,7 +349,7 @@ export default async function FuturesPage({ searchParams }: { searchParams: Sett
 
       {/* ── Réglages ── */}
       <Section title="Réglages du trading futures" hint="Lus par l'app à chaque ouverture. Les frais, la marge de maintenance et l'intervalle sont figés à l'ouverture de chaque position : un changement ne s'applique qu'aux NOUVELLES positions.">
-        <SettingsCard returnTo={RETURN} title="Trading futures" hint={`Réglages communs à tous les marchés (frais, marges, plafonds, positions max). Levier et marge de maintenance se règlent par marché, dans la section suivante. Devise : ${cur}.`} updatedAt={cfg.updated_at ? formatDateTime(new Date(cfg.updated_at)) + (cfg.updated_by ? ` par ${cfg.updated_by}` : "") : null} action={updateFuturesConfig}>
+        <SettingsCard returnTo={RETURN} title="Trading futures" hint={`Réglages communs à tous les marchés (frais, marges, plafonds, positions max). Levier et marge de maintenance se règlent par marché, dans la section suivante. Devise : ${cur}.`} updatedAt={cfg.updated_at ? formatDateTime(new Date(cfg.updated_at)) + (cfg.updated_by ? ` par ${cfg.updated_by}` : "") : null} action={updateFuturesConfig} requireReason>
           <Field label={`Marge par défaut (${cur})`} name="margin_default" defaultValue={cfg.margin_default} />
           <Field label="Marge minimale" name="margin_min" defaultValue={cfg.margin_min} />
           <Field label="Marge maximale" name="margin_max" defaultValue={cfg.margin_max} />

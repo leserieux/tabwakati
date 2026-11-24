@@ -63,6 +63,7 @@ export const NAV: NavEntry[] = [
     { href: "/dashboard/controls", label: "Contrôles" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
     { href: "/dashboard/admins", label: "Administrateurs" },
+    { href: "/dashboard/approvals", label: "Validations" },
     { href: "/dashboard/notifications", label: "Notifications" },
     { href: "/dashboard/telegram", label: "Bot Telegram" },
     { href: "/dashboard/app", label: "App mobile" },

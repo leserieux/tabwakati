@@ -2,6 +2,7 @@ import { loadBurns } from "@/modules/wakati/burns";
 import { formatNumber, formatUsd, formatDateTime } from "@/core/format";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 import { burnNow, updateBurnSettings, updateReserveSettings } from "./actions";
+import { ReasonField } from "@/components/settings-form";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ function Toggle({ label, name, defaultChecked }: { label: string; name: string; 
   );
 }
 
-export default async function BurnsPage({ searchParams }: { searchParams: { saved?: string; error?: string; msg?: string } }) {
+export default async function BurnsPage({ searchParams }: { searchParams: { saved?: string; error?: string; msg?: string; pending?: string } }) {
   const r = await loadBurns();
 
   return (
@@ -38,6 +39,7 @@ export default async function BurnsPage({ searchParams }: { searchParams: { save
       <ErrorNote text={r.error ? `Certaines données sont indisponibles : ${r.error}` : null} />
       {searchParams.error && <ErrorNote text={searchParams.msg || "Opération refusée."} />}
       {searchParams.saved && <div className="wk-alert-ok">{searchParams.msg || "Enregistré."}</div>}
+      {searchParams.pending && <div className="wk-alert-ok">{searchParams.pending}</div>}
 
       <div className="wk-strip">
         <div className="wk-strip-item"><div className="wk-strip-label">Prix du WAKATI</div><div className="wk-strip-value">{r.rule?.priceFcfa == null ? "—" : `${formatNumber(r.rule.priceFcfa, 4)} FCFA`}</div><div className="wk-strip-sub">{r.rule ? `Burn dès ${formatNumber(r.rule.thresholdFcfa, 2)} FCFA (${r.rule.progressPct == null ? "—" : formatNumber(r.rule.progressPct, 1)} % atteint)` : "Règle indisponible"}</div></div>
@@ -53,8 +55,9 @@ export default async function BurnsPage({ searchParams }: { searchParams: { save
         <div className="wk-panel" style={{ fontSize: 14.5, lineHeight: 1.7 }}>
           <strong>Un seul bénéfice net par jour</strong> (celui qui sert aussi à calculer le prix, calculé à 00:10 UTC). <strong>Sous {r.rule ? formatNumber(r.rule.thresholdFcfa, 2) : "1"} FCFA</strong> : 100 % va dans la caisse, aucun burn. <strong>À partir du seuil</strong> : {r.rule ? formatNumber(r.rule.sharePct, 0) : "30"} % du bénéfice positif du jour est brûlé en WAKATI depuis la trésorerie, le reste va dans la caisse. Un jour de perte ne brûle rien et la caisse l'absorbe.
           Les deux parts sont prélevées sur le même bénéfice : elles ne peuvent pas dépasser 100 %. Le burn est <strong>comptable</strong> et automatique (à 00:20 UTC, plafonné à {r.rule?.maxTreasuryPctPerDay != null ? formatNumber(r.rule.maxTreasuryPctPerDay, 1) : "—"} % de la trésorerie par jour) : rien à envoyer ni à confirmer ailleurs.
-          <form action={burnNow} style={{ marginTop: 14 }}>
-            <button type="submit" className="wk-btn">Lancer un passage de burn maintenant</button>
+          <form action={burnNow} style={{ marginTop: 14, maxWidth: 460 }}>
+            <ReasonField id="reason-burn-now" />
+            <button type="submit" className="wk-btn" style={{ marginTop: 10 }}>Lancer un passage de burn maintenant</button>
           </form>
         </div>
       </Section>
@@ -80,6 +83,7 @@ export default async function BurnsPage({ searchParams }: { searchParams: { save
                 <Field label="Plafond de l'offre WAKATI (WAKATI)" name="supply_cap_wakati" defaultValue={r.rule.supplyCapWakati} placeholder="automatique" hint="Offre totale propre à l'application, affichée dans WAKATI > Offre. Vide = automatique (WAKATI chez les utilisateurs + trésorerie). Ne crée ni ne bloque aucun jeton." />
                 <Toggle label="Burn activé (décoché = tout va dans la caisse)" name="enabled" defaultChecked={r.rule.enabled} />
               </div>
+              <ReasonField id="reason-burn-settings" />
               <button type="submit" className="wk-submit-sm">Enregistrer le burn</button>
             </form>
           </div>
@@ -101,6 +105,7 @@ export default async function BurnsPage({ searchParams }: { searchParams: { save
                 <Field label="Prix plancher (USD)" name="price_floor_usd" defaultValue={r.reserve.priceFloorUsd} hint={r.rule?.fcfaUsd ? `Soit ${(r.reserve.priceFloorUsd / r.rule.fcfaUsd).toLocaleString("fr-FR", { maximumFractionDigits: 4 })} FCFA. Le prix ne descend jamais en dessous (le relever fait remonter le prix dès le prochain calcul).` : "Le prix ne descend jamais en dessous."} />
                 <Toggle label="Calcul automatique du prix actif" name="is_active" defaultChecked={r.reserve.isActive} />
               </div>
+              <ReasonField id="reason-reserve-settings" />
               <button type="submit" className="wk-submit-sm">Enregistrer la caisse et le prix</button>
             </form>
           </div>

@@ -121,3 +121,18 @@ Les anciennes entrées du [CHANGELOG](CHANGELOG.md) citent ces chemins.
 | `lib/**/*.dart`, `pubspec.yaml`, `web/`, `assets/`, `docs/flutter/` | `mobile/…` |
 | `app/dashboard/logout-button.tsx` | `src/components/logout-button.tsx` |
 | `app/…`, `components/…`, `middleware.ts` | `src/app/…`, `src/components/…`, `src/middleware.ts` |
+
+
+## Actions sensibles et double validation
+
+Une action sensible (déplace de l'argent ou change les règles de la plateforme) passe par la barrière `src/core/approvals/gate.ts`, **après** ses propres validations et **avant** d'écrire :
+
+```ts
+const gate = await gateForm("wakati.burn_settings", formData);
+if (gate.kind !== "proceed") gateRedirect(PATH, gate);
+```
+
+- motif absent → refus ; `ADMIN_DUAL_CONTROL=on` → demande enregistrée (`admin_approvals`), rien n'est exécuté ; sinon → exécution immédiate, motif tracé.
+- Le validateur (autre compte nominatif super-admin) déclenche `approveRequest` (Système › Validations) : la base vérifie l'identité, puis l'action d'origine est **rejouée** avec les valeurs enregistrées (`core/approvals/executor.ts`) dans un contexte serveur privé que la barrière reconnaît. Un champ de formulaire forgé ne peut pas le simuler.
+
+**Ajouter une action sensible** : (1) une entrée dans `SENSITIVE_ACTIONS` (`core/approvals/policy.ts`), (2) l'appel à `gateForm` dans l'action, (3) un champ motif dans son formulaire (`<ReasonField />`), (4) l'action dans `HANDLERS` (`app/dashboard/approvals/handlers.ts`) : TypeScript refuse tant que le registre est incomplet.

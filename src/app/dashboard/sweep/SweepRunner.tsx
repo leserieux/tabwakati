@@ -46,23 +46,35 @@ export function SweepRunner({ userAddressId, network, label }: { userAddressId?:
   const [error, setError] = useState<string | null>(null);
   const [ranDryRun, setRanDryRun] = useState(false);
   const [confirmInput, setConfirmInput] = useState("");
+  const [reason, setReason] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function run(dryRun: boolean) {
     setLoading(dryRun ? "dry" : "real");
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch("/api/sweep/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun, network: scope || undefined, userAddressId })
+        body: JSON.stringify({ dryRun, network: scope || undefined, userAddressId, reason: dryRun ? undefined : reason })
       });
       const json = await res.json();
+      if (res.status === 202) {
+        // Double validation active : la demande attend un second super-admin, rien n'a été envoyé on-chain.
+        setNotice(json.message || "Demande envoyée : à valider par un second super-admin.");
+        setRanDryRun(false);
+        setConfirmInput("");
+        setReason("");
+        return;
+      }
       if (!res.ok) throw new Error(json.error || "Échec de l'appel");
       setResults(json.results || []);
       if (dryRun) setRanDryRun(true);
       else {
         setRanDryRun(false);
         setConfirmInput("");
+        setReason("");
       }
     } catch (e) {
       setError((e as Error).message);
@@ -73,6 +85,7 @@ export function SweepRunner({ userAddressId, network, label }: { userAddressId?:
 
   function handleRealExecution() {
     if (confirmInput !== CONFIRM_WORD) return;
+    if (reason.trim().length < 5) { setError("Motif obligatoire (5 caractères minimum)."); return; }
     if (!confirm("Cette action envoie de VRAIES transactions on-chain et déplace des fonds réels. Confirmer l'exécution du balayage réel ?")) return;
     run(false);
   }
@@ -99,6 +112,7 @@ export function SweepRunner({ userAddressId, network, label }: { userAddressId?:
         </button>
         {error && <span className="wk-bad">{error}</span>}
       </div>
+      {notice && <div className="wk-alert-ok" style={{ marginTop: 12 }}>{notice}</div>}
 
       {results !== null && (
         <div style={{ marginTop: 12 }}>
@@ -156,7 +170,16 @@ export function SweepRunner({ userAddressId, network, label }: { userAddressId?:
               className="wk-input"
               style={{ maxWidth: 220 }}
             />
-            <button type="button" className="wk-danger-link" disabled={confirmInput !== CONFIRM_WORD || loading !== null} onClick={handleRealExecution}>
+            <input
+              type="text"
+              placeholder="Motif (obligatoire)"
+              value={reason}
+              maxLength={300}
+              onChange={(e) => setReason(e.target.value)}
+              className="wk-input"
+              style={{ maxWidth: 300 }}
+            />
+            <button type="button" className="wk-danger-link" disabled={confirmInput !== CONFIRM_WORD || reason.trim().length < 5 || loading !== null} onClick={handleRealExecution}>
               {loading === "real" ? "Exécution en cours…" : "Exécuter le balayage réel"}
             </button>
           </div>

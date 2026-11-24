@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSupabaseAdmin } from "@/core/db/data";
 import { diffFields, getCurrentActor, logAdminAction } from "@/core/audit";
+import { gateForm, gateRedirect } from "@/core/approvals/gate";
 
 const PATH = "/dashboard/futures";
 
@@ -117,6 +118,10 @@ export async function updateFuturesConfig(formData: FormData) {
   }
   if (changes.length === 0) done("saved", "Réglages futures (aucun changement)");
 
+  // Sensible (frais, marges, plafonds) : motif obligatoire et, si activée, seconde validation.
+  const gate = await gateForm("futures.config", formData);
+  if (gate.kind !== "proceed") gateRedirect(PATH, gate);
+
   const { error } = await db.from("futures_config").update({ ...patch, updated_at: new Date().toISOString(), updated_by: getCurrentActor() }).eq("id", 1);
   await logAdminAction({
     action: "futures.config.update", summary: "Réglages futures", target: "futures_config#1",
@@ -170,6 +175,9 @@ export async function forceClosePosition(formData: FormData) {
 export async function forceCloseAll(formData: FormData) {
   assertCanWrite();
   if (str(formData, "confirm").toUpperCase() !== "FERMER") done("error", "Fermeture de toutes les positions", "Confirmation incorrecte : tapez FERMER.");
+  // Urgence irréversible : motif obligatoire et, si activée, seconde validation.
+  const gate = await gateForm("futures.force_close_all", formData);
+  if (gate.kind !== "proceed") gateRedirect(PATH, gate);
   const db = getSupabaseAdmin();
   const { data, error } = await db.rpc("admin_futures_close_all");
   const res: any = data;
