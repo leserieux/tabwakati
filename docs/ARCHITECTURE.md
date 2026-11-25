@@ -136,3 +136,10 @@ if (gate.kind !== "proceed") gateRedirect(PATH, gate);
 - Le validateur (autre compte nominatif super-admin) déclenche `approveRequest` (Système › Validations) : la base vérifie l'identité, puis l'action d'origine est **rejouée** avec les valeurs enregistrées (`core/approvals/executor.ts`) dans un contexte serveur privé que la barrière reconnaît. Un champ de formulaire forgé ne peut pas le simuler.
 
 **Ajouter une action sensible** : (1) une entrée dans `SENSITIVE_ACTIONS` (`core/approvals/policy.ts`), (2) l'appel à `gateForm` dans l'action, (3) un champ motif dans son formulaire (`<ReasonField />`), (4) l'action dans `HANDLERS` (`app/dashboard/approvals/handlers.ts`) : TypeScript refuse tant que le registre est incomplet.
+
+
+## Agrégations : la base regroupe, le code valorise
+
+Pour tout total sur une grande table (frais, transactions, positions) : une fonction SQL `admin_*_aggregate` renvoie des **groupes** (par actif, type, mois…), jamais les lignes. Le code TypeScript applique ensuite les règles métier (types exclus, valorisation en USD au cours actuel) dans une **fonction pure** (`buildFeesReport`). Modèle à suivre : `modules/metrics/fee-aggregates.ts` + `modules/revenue/fees.ts`.
+
+Preuve d'équivalence obligatoire quand on remplace un calcul existant : (1) la fonction SQL est comparée à un calcul ligne par ligne sur la vraie base ; (2) un test recopie l'**ancien** algorithme et le compare au nouveau sur des données aléatoires (`tests/fees.test.ts`), avec des frontières de fenêtres, des prix manquants et des dates futures.

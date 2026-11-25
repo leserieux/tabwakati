@@ -10,8 +10,7 @@ import { loadPnl } from "@/modules/revenue/pnl";
 import { loadControls } from "@/modules/system/controls";
 import { statusLabel, statusTone, lineRatio } from "@/modules/treasury/asset-view";
 import { formatCompactNumber, formatCompactUsd, formatDateTime, formatNumber, formatUsd, formatPct } from "@/core/format";
-import { PageHeader, Section, Pill, CoverageBar, ErrorNote, TableWrap, Th, Td, type Tone } from "@/components/ui";
-import { loadRefusals, refusalKind, KIND_LABEL } from "@/modules/treasury/refusals";
+import { PageHeader, Section, Pill, CoverageBar, ErrorNote, type Tone } from "@/components/ui";
 import { can } from "@/core/auth/session";
 import RestrictedHome from "@/components/restricted-home";
 
@@ -103,35 +102,11 @@ export default async function TodayPage() {
     console.error("[accueil] plan d'approvisionnement non calculé:", e);
   }
 
-  // Échanges refusés faute de liquidité : un refus = une opération manquée, souvent sans aucun message côté admin.
-  const refusals = await loadRefusals(now);
-  const recentRefusals = refusals.rows.slice(0, 6);
-  const refusalNames = new Map<string, string>();
-  if (recentRefusals.length) {
-    const ids = [...new Set(recentRefusals.map((r) => r.user_id))];
-    const { data: nameRows } = await db.from("admin_users_overview").select("id, username, email").in("id", ids);
-    for (const u of (nameRows as any[]) || []) refusalNames.set(u.id, u.username || u.email || String(u.id).slice(0, 8));
-  }
-
   const todo: Todo[] = [];
   for (const f of funding) {
     if (f.urgency === "now") todo.push({ tone: "bad", text: actionText(f), href: "/dashboard/funding", usd: f.action.usd ?? undefined });
     else if (f.urgency === "soon") todo.push({ tone: "warn", text: actionText(f), href: "/dashboard/funding", usd: f.action.usd ?? undefined });
   }
-  for (const g of refusals.byAsset) {
-    const mine = refusals.rows.filter((r) => r.asset_symbol === g.asset);
-    const n24 = mine.filter((r) => now - Date.parse(r.created_at) <= DAY).length;
-    const n7 = mine.filter((r) => now - Date.parse(r.created_at) <= 7 * DAY).length;
-    const gap = g.shortfallUsd > 0 ? ` (il manquait jusqu'à ${formatUsd(g.shortfallUsd)})` : "";
-    if (g.active) {
-      todo.push({ tone: "bad", text: `La caisse de ${g.asset} est insuffisante : des échanges sont refusés en ce moment (${g.count} refus en 30 jours, ${g.users} utilisateur(s))${gap}. Ajoute du ${g.asset} dans la caisse d'échange.`, href: "/dashboard/liquidity#refus", usd: g.shortfallUsd || undefined });
-    } else if (n24 > 0) {
-      todo.push({ tone: "warn", text: `${n24} échange(s) refusé(s) ces dernières 24 h faute de ${g.asset} en caisse${gap}. Le blocage est levé : vérifie que la caisse restera suffisante.`, href: "/dashboard/liquidity#refus", usd: g.shortfallUsd || undefined });
-    } else if (n7 > 0) {
-      todo.push({ tone: "info", text: `${n7} échange(s) refusé(s) cette semaine faute de ${g.asset} en caisse${gap}. Plus de blocage aujourd'hui.`, href: "/dashboard/liquidity#refus" });
-    }
-  }
-  if (refusals.error) todo.push({ tone: "warn", text: `Échanges refusés illisibles : ${refusals.error}.`, href: "/dashboard/liquidity#refus" });
   const watchAssets = funding.filter((f) => f.urgency === "watch").map((f) => f.plan.asset);
   if (watchAssets.length) todo.push({ tone: "info", text: `Si les plus gros utilisateurs retiraient ensemble, il faudrait d'abord déplacer de l'argent du coffre sur : ${watchAssets.join(", ")}.`, href: "/dashboard/funding" });
   if (volumeDelta.unusual && volumeDelta.direction === "down") todo.push({ tone: "warn", text: `Le volume des 7 derniers jours a baissé de ${Math.round(Math.abs(volumeDelta.pct ?? 0))} % par rapport aux 7 jours d'avant.`, href: "/dashboard/transactions" });
@@ -143,7 +118,8 @@ export default async function TodayPage() {
   if (unreadable.length) todo.push({ tone: "warn", text: `Solde réel illisible pour : ${unreadable.join(", ")} (exclus de la couverture).`, href: "/dashboard/treasury" });
   if (cov.unpriced.length) todo.push({ tone: "warn", text: `Sans prix valide : ${cov.unpriced.join(", ")}.`, href: "/dashboard/treasury" });
   for (const row of ((recon.data as any[]) || [])) {
-    if (Math.abs(Number(row.liability_diff || 0)) > EPS) todo.push({ tone: "bad", text: `${row.asset_symbol} : les soldes des utilisateurs ne concordent pas avec les mouvements enregistrés (écart de ${formatNumber(Number(row.liability_diff))}).`, href: "/dashboard/controls" });
+    // « liability_diff » (soldes − dette calculée) est retiré : la dette est calculée à partir des soldes eux-mêmes, l'écart vaut donc toujours 0.
+    // Le vrai contrôle « solde modifié sans transaction » vit dans le centre d'alertes (Système › Alertes).
     if (Number(row.negative_rows || 0) > 0) todo.push({ tone: "bad", text: `${row.asset_symbol} : ${row.negative_rows} utilisateur(s) avec un solde négatif.`, href: "/dashboard/controls" });
     if (Math.abs(Number(row.staking_orphan || 0)) > EPS) todo.push({ tone: "warn", text: `${row.asset_symbol} : ${formatNumber(Number(row.staking_orphan))} placés en staking sans position de staking correspondante.`, href: "/dashboard/controls" });
   }
@@ -201,7 +177,6 @@ export default async function TodayPage() {
         <Kpi label="Utilisateurs actifs (7 j)" value={`${formatCompactNumber(usersActive.count || 0)} / ${formatCompactNumber(usersTotal.count || 0)}`} detail={`${formatCompactNumber(usersNew.count || 0)} nouveaux sur 7 j`} href="/dashboard/users" trend={newUsersDelta} trendLabel="nouveaux vs 7 j précédents" />
         <Kpi label="Volume (7 j)" value={formatCompactUsd(volume7d)} detail="hors jeux" href="/dashboard/transactions" trend={volumeDelta} trendLabel="vs 7 j précédents" />
         <Kpi label="Résultat (30 j)" value={net30 === null ? "—" : formatCompactUsd(net30)} detail="net de la plateforme" href="/dashboard/pnl" tone={net30 === null ? undefined : net30 < -0.005 ? "negative" : "positive"} trend={net30Delta} trendLabel="vs 30 j précédents" />
-        <Kpi label="Échanges refusés (7 j)" value={formatCompactNumber(refusals.last7d)} detail={refusals.active.length ? `bloqué : ${refusals.active.join(", ")}` : refusals.last7d > 0 ? `${formatUsd(refusals.usd7d)} d'échanges manqués, plus de blocage` : "aucun refus"} href="/dashboard/liquidity#refus" tone={refusals.active.length > 0 || refusals.last24h > 0 ? "negative" : undefined} />
         <Kpi label="Transactions en attente" value={formatCompactNumber(pendingCount)} detail={stuckCount > 0 ? `${stuckCount} depuis plus d'1 h` : "aucune bloquée"} href="/dashboard/operations" tone={stuckCount > 0 ? "negative" : undefined} />
         <Kpi label="Échecs (24 h)" value={formatCompactNumber(failedCount)} detail="transactions échouées" href="/dashboard/operations#echecs" tone={failedCount > 0 ? "negative" : undefined} />
         <Kpi label="Prêts à surveiller" value={formatCompactNumber(atRisk)} detail="marge faible ou échéance dépassée" href="/dashboard/credit" tone={atRisk > 0 ? "negative" : undefined} />
@@ -247,42 +222,6 @@ export default async function TodayPage() {
           )}
         </section>
       </div>
-
-      <Section title="Échanges refusés (manque de liquidité)" hint="Quand la caisse n'a pas assez de l'actif à verser, l'échange est refusé et l'utilisateur n'est pas débité : c'est une vente manquée. Les 6 derniers sur 30 jours.">
-        {recentRefusals.length === 0 ? (
-          <div className="wk-exchange-empty"><span>✓</span><div><strong>Aucun échange refusé</strong><p>Aucun refus pour manque de liquidité ces 30 derniers jours.</p></div></div>
-        ) : (
-          <>
-            <TableWrap>
-              <thead>
-                <tr>
-                  <Th>Date</Th>
-                  <Th>Utilisateur</Th>
-                  <Th hideSm>Type</Th>
-                  <Th right>Il voulait</Th>
-                  <Th right hideSm>En caisse</Th>
-                  <Th right>Manque</Th>
-                  <Th>État</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentRefusals.map((r) => (
-                  <tr key={r.id}>
-                    <Td label="Date">{formatDateTime(new Date(r.created_at))}</Td>
-                    <Td label="Utilisateur"><a className="wk-link" href={`/dashboard/users/${r.user_id}`}>{refusalNames.get(r.user_id) ?? String(r.user_id).slice(0, 8)}</a></Td>
-                    <Td hideSm label="Type">{KIND_LABEL[refusalKind(r)]}</Td>
-                    <Td right label="Il voulait">{formatNumber(Number(r.requested_amount))} <span className="wk-asset-sub">{r.asset_symbol}</span><div className="wk-usd">contre {formatNumber(Number(r.from_amount))} {r.from_asset}</div></Td>
-                    <Td right hideSm label="En caisse">{formatNumber(Number(r.reserve_amount))} <span className="wk-asset-sub">{r.asset_symbol}</span></Td>
-                    <Td right label="Manque"><span className="wk-neg">{formatNumber(Number(r.shortfall_amount))} {r.asset_symbol}</span>{r.shortfall_usd !== null && <div className="wk-usd">{formatUsd(Number(r.shortfall_usd))}</div>}</Td>
-                    <Td label="État">{refusals.active.includes(r.asset_symbol) ? <Pill tone="bad">Toujours bloqué</Pill> : <Pill tone="info">Débloqué</Pill>}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </TableWrap>
-            <p className="wk-hint" style={{ marginTop: 8 }}><a className="wk-link" href="/dashboard/liquidity#refus">Voir tous les refus et ajouter de la liquidité →</a></p>
-          </>
-        )}
-      </Section>
 
       {futuresMoney.data && (
         <Section title="Futures : résultat de la plateforme" hint="Frais encaissés et PNL de trading, en WAKATI. Détail dans Produits › Futures.">

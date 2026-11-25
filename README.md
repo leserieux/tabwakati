@@ -133,14 +133,14 @@ Objectif : qu'aucun compte ne puisse faire plus que son métier, et que rien de 
 
 Objectif : chaque chiffre est exact, frais et vérifiable ; les pages restent rapides quand la base grossit.
 
-- [ ] Déplacer les agrégations lourdes dans la base (vues ou fonctions `admin_*`) : aujourd'hui `fetchAll` ramène jusqu'à 200 000 lignes en mémoire (Résultat, Frais, rentabilité par utilisateur)
+- [ ] Déplacer les agrégations lourdes dans la base (vues ou fonctions `admin_*`) : aujourd'hui `fetchAll` ramène jusqu'à 200 000 lignes en mémoire. **Fait : Frais** (`admin_fees_aggregate` : 784 lignes → 53 groupes, équivalence prouvée par test et sur la vraie base). **Reste** : Résultat (P&L), rentabilité par utilisateur, analytics, cohortes (~16 lectures `fetchAll`), voir `docs/CHANGELOG.md`
 - [ ] Cache court (60 s) sur les pages lourdes et sur les prix
 - [ ] Fraîcheur affichée sur chaque bloc ; mini-courbes sur 30 jours à l'accueil
-- [ ] Capteur d'écart par actif (soldes contre mouvements), alerte au-delà d'un seuil
+- [x] Capteur d'écart par actif, alerte au-delà d'un seuil (`fn_admin_check_asset_gaps`, toutes les 10 minutes, seuil dans `admin_alert_settings`) : staking incohérent, soldes négatifs, portefeuille de trésorerie contre son journal, et **solde modifié sans transaction** ; écran Système › Alertes + bandeau sur toutes les pages. Le contrôle « soldes contre dettes » a été retiré : il comparait les soldes à une dette calculée *à partir de ces mêmes soldes* (écart toujours 0)
 - [ ] Types générés par Supabase (`supabase gen types`) pour supprimer les ~200 `any`
 - [ ] Découper les pages de plus de 300 lignes sur le modèle de `modules/products/credit.ts` : Liquidité (489), Réserve de retrait (445), fiche utilisateur (414), Futures (400), Couverture (350), `settings/actions.ts` (543)
 - [ ] Remplacer les styles en ligne (~220) par des classes CSS
-- [ ] Étendre les tests : Résultat, Frais, Couverture, Cohortes, Décision utilisateur
+- [ ] Étendre les tests : Résultat, Frais, Couverture, Cohortes, Décision utilisateur *(Frais fait : 9 tests dont équivalence ancien/nouveau calcul)*
 
 **Terminé quand** : aucune page ne lit plus de 1 000 lignes pour afficher un total ; toutes les pages sont sous 300 lignes ; la couverture de tests inclut tous les calculs d'argent.
 

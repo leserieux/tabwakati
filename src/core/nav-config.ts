@@ -61,6 +61,7 @@ export const NAV: NavEntry[] = [
   ] },
   { key: "system", label: "Système", icon: "gear", href: "/dashboard/controls", tabs: [
     { href: "/dashboard/controls", label: "Contrôles" },
+    { href: "/dashboard/alerts", label: "Alertes" },
     { href: "/dashboard/audit", label: "Journal d'audit" },
     { href: "/dashboard/admins", label: "Administrateurs" },
     { href: "/dashboard/approvals", label: "Validations" },

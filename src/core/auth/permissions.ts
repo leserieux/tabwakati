@@ -2,12 +2,12 @@
 export type Permission =
   | "dashboard.read" | "users.read" | "users.notes" | "users.freeze" | "users.limits"
   | "finance.read" | "finance.write" | "withdrawals.review" | "kyc.review" | "risk.manage"
-  | "tasks.manage" | "push.send" | "audit.read" | "admins.manage" | "exports.run" | "settings.manage" | "approvals.decide";
+  | "tasks.manage" | "push.send" | "audit.read" | "admins.manage" | "exports.run" | "settings.manage" | "approvals.decide" | "alerts.read" | "alerts.handle";
 
 const MAP: Record<string, readonly Permission[]> = {
-  finance: ["dashboard.read", "users.read", "finance.read", "finance.write", "withdrawals.review", "audit.read", "exports.run"],
+  finance: ["dashboard.read", "users.read", "finance.read", "finance.write", "withdrawals.review", "audit.read", "exports.run", "alerts.read", "alerts.handle"],
   support: ["dashboard.read", "users.read", "users.notes", "tasks.manage", "push.send"],
-  risk: ["dashboard.read", "users.read", "users.notes", "users.freeze", "users.limits", "risk.manage", "kyc.review", "withdrawals.review", "audit.read", "exports.run"],
+  risk: ["dashboard.read", "users.read", "users.notes", "users.freeze", "users.limits", "risk.manage", "kyc.review", "withdrawals.review", "audit.read", "exports.run", "alerts.read", "alerts.handle"],
   viewer: ["dashboard.read", "users.read", "finance.read"]
 };
 

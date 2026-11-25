@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { verifySessionToken, getSessionActor, getSessionRole, SESSION_COOKIE_NAME } from "@/core/auth/auth";
 import DashboardShell from "@/components/dashboard-shell";
 import SectionTabs from "@/components/section-tabs";
+import AlertBanner from "@/components/alert-banner";
 
 export const runtime = "nodejs";
 
@@ -14,5 +15,5 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const role = getSessionRole(token);
-  return <DashboardShell actor={getSessionActor(token)} role={role} readOnly={role === "viewer"}><div><SectionTabs role={role} />{children}</div></DashboardShell>;
+  return <DashboardShell actor={getSessionActor(token)} role={role} readOnly={role === "viewer"}><div><SectionTabs role={role} /><AlertBanner role={role} />{children}</div></DashboardShell>;
 }

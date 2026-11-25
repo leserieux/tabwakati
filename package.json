@@ -3,26 +3,37 @@
   "version": "0.3.0",
   "private": true,
   "description": "Console d'administration Wakati (Next.js + Supabase)",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "lint": "eslint src tests --ext .ts,.tsx --max-warnings 274",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\""
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.45.4",
     "next": "14.2.35",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "@supabase/supabase-js": "2.45.4"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "typescript": "5.5.4",
     "@types/node": "20.14.15",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.35",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "5.5.4",
     "vitest": "2.1.9"
   }
 }

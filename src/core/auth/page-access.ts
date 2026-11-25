@@ -47,6 +47,7 @@ const RULES: ReadonlyArray<readonly [prefix: string, permission: Permission]> = 
   ["/dashboard/audit", "audit.read"],
   ["/dashboard/admins", "admins.manage"],
   ["/dashboard/approvals", "approvals.decide"],
+  ["/dashboard/alerts", "alerts.read"],
   ["/dashboard/notifications", "push.send"],
   ["/dashboard/settings", "settings.manage"],
   ["/dashboard/app", "settings.manage"],

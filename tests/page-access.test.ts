@@ -96,3 +96,10 @@ describe("menu filtré par rôle", () => {
     }
   });
 });
+
+describe("centre d'alertes", () => {
+  it("visible et traitable par la finance, le risque et les super-admins ; pas par le support ni la lecture seule", () => {
+    for (const r of ["super_admin", "admin", "finance", "risk"]) expect(canAccess(r, "/dashboard/alerts"), r).toBe(true);
+    for (const r of ["support", "viewer"]) expect(canAccess(r, "/dashboard/alerts"), r).toBe(false);
+  });
+});
