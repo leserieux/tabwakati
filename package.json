@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm test",
-    "lint": "eslint src tests --ext .ts,.tsx --max-warnings 274",
+    "lint": "eslint src tests --ext .ts,.tsx --max-warnings 271",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\""
   },

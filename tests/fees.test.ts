@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { rng, plain, expectClose } from "./helpers";
 import { buildFeesReport } from "@/modules/revenue/fees";
 import { feeTotalsByAsset, type FeeAggRow } from "@/modules/metrics/fee-aggregates";
 import { EXCLUDED_FEE_TYPES, FUTURES_PNL_FEE_TYPES } from "@/modules/metrics/rules";
@@ -86,8 +87,6 @@ function sqlAggregate(rows: RawFee[], now: number): FeeAggRow[] {
   return [...groups.values()];
 }
 
-function rng(seed: number) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-
 function randomRows(seed: number, n: number): RawFee[] {
   const rand = rng(seed);
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
@@ -104,25 +103,6 @@ function randomRows(seed: number, n: number): RawFee[] {
   return rows;
 }
 
-/** Transforme un rapport en objet comparable (Map → objet) */
-const plain = (r: unknown): unknown => JSON.parse(JSON.stringify(r, (_k, v) => (v instanceof Map ? Object.fromEntries([...v.entries()].sort()) : v)));
-function expectClose(actual: unknown, expected: unknown, path = "rapport"): void {
-  if (typeof expected === "number") {
-    expect(typeof actual, path).toBe("number");
-    const got = actual as number;
-    const tol = 1e-9 * Math.max(1, Math.abs(expected));
-    expect(Math.abs(got - expected), `${path}: ${got} ≠ ${expected}`).toBeLessThanOrEqual(tol);
-  } else if (Array.isArray(expected)) {
-    const got = actual as unknown[];
-    expect(got.length, `${path}.length`).toBe(expected.length);
-    expected.forEach((e, i) => expectClose(got[i], e, `${path}[${i}]`));
-  } else if (expected && typeof expected === "object") {
-    const got = actual as Record<string, unknown>;
-    const exp = expected as Record<string, unknown>;
-    expect(Object.keys(got).sort(), `${path} clés`).toEqual(Object.keys(exp).sort());
-    for (const k of Object.keys(exp)) expectClose(got[k], exp[k], `${path}.${k}`);
-  } else expect(actual, path).toEqual(expected);
-}
 /** Les ex-aequo peuvent sortir dans un autre ordre : on trie sur (usd, clé) avant de comparer. */
 const normalizeOrder = <T extends { byType: Group[]; byAsset: Group[]; unpriced: string[]; excluded: { unpricedAssets: string[] } }>(r: T): T => {
   const sortGroups = (xs: Group[]) => [...xs].sort((a, b) => b.usd - a.usd || String(a.key).localeCompare(String(b.key)));

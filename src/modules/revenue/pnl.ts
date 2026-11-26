@@ -1,6 +1,6 @@
-import { getSupabaseAdmin, fetchAll, loadPrices, q } from "@/core/db/data";
+import { getSupabaseAdmin, loadPrices, q } from "@/core/db/data";
 import { isValidPrice } from "@/core/valuation";
-import { FEE_TYPE_EXCLUSION_FILTER } from "@/modules/metrics/rules";
+import { EXCLUDED_FEE_TYPES } from "@/modules/metrics/rules";
 
 /**
  * Compte de résultat de la plateforme.
@@ -36,7 +36,6 @@ const TX_CAT: Record<string, CatKey> = {
 const DAY = 86_400_000;
 const WAKATI = "WAKATI";
 
-interface Ev { cat: CatKey; asset: string; amount: number; ts: number; usd: number }
 
 export interface Totals {
   net: number; real: number; wakati: number;
@@ -76,24 +75,28 @@ export interface Valuer {
   error?: string;
 }
 
-/** Valorisation commune : WAKATI au prix du jour quand il est connu, sinon cours actuel ; autres actifs au cours actuel. */
-export async function loadValuer(): Promise<Valuer> {
-  const db = getSupabaseAdmin();
-  const [hist, prices, daily] = await Promise.all([
-    q<any>(db.from("wakati_price_history").select("computed_for_date, final_price_usd, created_at").order("computed_for_date", { ascending: true }).order("created_at", { ascending: true })),
-    loadPrices(),
-    db.rpc("admin_daily_prices")
-  ]);
+export interface ValuerInputs {
+  /** Historique du prix WAKATI : le dernier enregistrement d'un jour l'emporte. */
+  wakatiHistory: { computed_for_date: unknown; final_price_usd: unknown }[];
+  /** Prix journaliers des autres actifs : { actif: { "YYYY-MM-DD": prix } }. */
+  dailyPrices: Record<string, Record<string, number>>;
+  /** Cours actuels. */
+  prices: Map<string, number>;
+  error?: string;
+}
+
+/** Construit le valorisateur à partir de données déjà chargées (fonction pure, testable sans base). */
+export function makeValuer(inputs: ValuerInputs): Valuer {
+  const { prices } = inputs;
   // Prix journaliers des autres actifs : { asset: { "YYYY-MM-DD": prix } }
   const dailyByAsset = new Map<string, Map<string, number>>();
-  const dailyData = (daily.data ?? {}) as Record<string, Record<string, number>>;
-  for (const [asset, days] of Object.entries(dailyData)) {
+  for (const [asset, days] of Object.entries(inputs.dailyPrices ?? {})) {
     const m = new Map<string, number>();
     for (const [d, p] of Object.entries(days)) { const v = Number(p); if (isValidPrice(v)) m.set(d, v); }
     if (m.size) dailyByAsset.set(asset, m);
   }
   const wakatiDaily = new Map<string, number>();
-  for (const h of hist.rows) { const p = Number(h.final_price_usd); if (isValidPrice(p)) wakatiDaily.set(String(h.computed_for_date).slice(0, 10), p); }
+  for (const h of inputs.wakatiHistory) { const p = Number(h.final_price_usd); if (isValidPrice(p)) wakatiDaily.set(String(h.computed_for_date).slice(0, 10), p); }
   const wakatiNow = prices.get(WAKATI) ?? null;
   const wakatiPeak = wakatiDaily.size ? Math.max(...wakatiDaily.values()) : null;
   const priceAtEx = (asset: string, ts: number): { price: number | null; basis: "day" | "current" } => {
@@ -116,7 +119,21 @@ export async function loadValuer(): Promise<Valuer> {
     return { price: isValidPrice(p) ? (p as number) : null, basis: "current" };
   };
   const priceAt = (asset: string, ts: number): number | null => priceAtEx(asset, ts).price;
-  return { prices, wakatiNow, wakatiPeak, wakatiDaily, priceAt, priceAtEx, error: [hist.error, daily.error?.message].filter(Boolean).join(" · ") || undefined };
+  return { prices, wakatiNow, wakatiPeak, wakatiDaily, priceAt, priceAtEx, error: inputs.error };
+}
+
+/** Valorisation commune : WAKATI au prix du jour quand il est connu, sinon cours actuel ; autres actifs au cours actuel. */
+export async function loadValuer(): Promise<Valuer> {
+  const db = getSupabaseAdmin();
+  const [hist, prices, daily] = await Promise.all([
+    q<any>(db.from("wakati_price_history").select("computed_for_date, final_price_usd, created_at").order("computed_for_date", { ascending: true }).order("created_at", { ascending: true })),
+    loadPrices(),
+    db.rpc("admin_daily_prices")
+  ]);
+  return makeValuer({
+    wakatiHistory: hist.rows, dailyPrices: (daily.data ?? {}) as Record<string, Record<string, number>>, prices,
+    error: [hist.error, daily.error?.message].filter(Boolean).join(" · ") || undefined
+  });
 }
 
 function emptyTotals(): Totals {
@@ -125,14 +142,19 @@ function emptyTotals(): Totals {
   return { net: 0, real: 0, wakati: 0, byCat, bets: 0, wins: 0, gameNet: 0, rtp: null };
 }
 
-function aggregate(events: Ev[], from: number, to: number): Totals {
+/** Groupe de flux renvoyé par la base (fonction admin_pnl_aggregate) : catégorie × actif × jour UTC × segment de fenêtre. */
+export interface PnlGroup { cat: CatKey; asset_symbol: string; day: string; seg: number | string; cnt: number | string; amount_sum: number | string }
+
+interface Flow { cat: CatKey; asset: string; amount: number; count: number; dayMs: number; seg: number; usd: number }
+
+function aggregate(flows: Flow[], keep: (f: Flow) => boolean): Totals {
   const t = emptyTotals();
-  for (const e of events) {
-    if (e.ts < from || e.ts >= to) continue;
+  for (const e of flows) {
+    if (!keep(e)) continue;
     const sign = CATS[e.cat].sign;
     const c = t.byCat[e.cat];
     const signed = sign * e.usd;
-    c.usd += signed; c.count += 1;
+    c.usd += signed; c.count += e.count;
     c.native.set(e.asset, (c.native.get(e.asset) ?? 0) + e.amount);
     if (e.asset === WAKATI) { c.wakati += signed; t.wakati += signed; } else { c.real += signed; t.real += signed; }
     t.net += signed;
@@ -144,66 +166,89 @@ function aggregate(events: Ev[], from: number, to: number): Totals {
   return t;
 }
 
-export async function loadPnl(periodDays: number, now = Date.now()): Promise<PnlReport> {
-  const db = getSupabaseAdmin();
-  const horizon = new Date(now - 400 * DAY).toISOString();
-  const txTypes = Object.keys(TX_CAT);
+/**
+ * Instants (triés, sans doublon) où une fenêtre de période commence ou finit. La base les reçoit pour découper
+ * chaque groupe : un flux d'une même journée mais de part et d'autre d'une frontière (en milieu de journée) tombe
+ * ainsi dans deux groupes, et les totaux restent exacts à la milliseconde.
+ */
+export function pnlCuts(now: number, periodDays: number): number[] {
+  const set = new Set<number>([now + 1, now - 30 * DAY]);
+  if (periodDays > 0) { const start = now - periodDays * DAY; set.add(start); set.add(start - periodDays * DAY); }
+  return [...set].sort((a, b) => a - b);
+}
 
-  const [tx, fees, valuer, stake, wallets, futuresClosed, futuresCfg] = await Promise.all([
-    fetchAll<any>((a, b) => db.from("transactions").select("type, asset_symbol, amount, created_at, metadata").eq("status", "completed").in("type", txTypes).gte("created_at", horizon).order("id").range(a, b)),
-    fetchAll<any>((a, b) => db.from("platform_fees").select("asset_symbol, amount, collected_at").eq("is_test", false).not("fee_type", "in", FEE_TYPE_EXCLUSION_FILTER).gte("collected_at", horizon).order("id").range(a, b)),
-    loadValuer(),
-    q<any>(db.from("admin_staking_overview").select("total_staked, apr").eq("asset_symbol", WAKATI)),
-    q<any>(db.from("treasury_wallets").select("asset_symbol, balance")),
-    // Futures : PNL de trading RÉALISÉ des positions clôturées. La marge d'une position ouverte n'est pas un gain.
-    fetchAll<any>((a, b) => db.from("futures_positions").select("margin, payout, fees_funding, fees_close, closed_at").eq("status", "closed").gte("closed_at", horizon).order("closed_at").range(a, b)),
-    q<any>(db.from("futures_config").select("currency_symbol").eq("id", 1))
-  ]);
+export interface FlowResult {
+  current: Totals; previous: Totals | null; last30: Totals; months: PnlReport["months"];
+  /** WAKATI net entré (+) ou sorti (-) depuis 30 jours : sert à estimer la réserve en jours. */
+  wakatiNet30: number;
+  unpriced: Set<string>; dayUsd: number; currentUsd: number;
+}
 
-  const { prices, wakatiNow, wakatiPeak } = valuer;
-  const unpriced = new Set<string>();
-  let dayUsd = 0, currentUsd = 0;
-
-  const events: Ev[] = [];
-  const push = (cat: CatKey, asset: string, amount: number, ts: number) => {
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    const { price: p, basis } = valuer.priceAtEx(asset, ts);
-    if (p === null) unpriced.add(asset);
-    else if (basis === "day") dayUsd += amount * p;
-    else currentUsd += amount * p;
-    events.push({ cat, asset, amount, ts, usd: p === null ? 0 : amount * p });
-  };
-  // Les mouvements de marge du futures (game_bet / game_win avec metadata.game = 'futures') sont ignorés ici :
-  // une marge immobilisée n'est pas une mise encaissée, et une marge rendue n'est pas un gain payé.
-  for (const r of tx.rows) {
-    if (r.metadata?.game === "futures") continue;
-    const cat = TX_CAT[r.type];
-    if (cat) push(cat, String(r.asset_symbol), Number(r.amount), new Date(r.created_at).getTime());
-  }
-  const futuresCur = String(futuresCfg.rows[0]?.currency_symbol ?? WAKATI);
-  for (const r of futuresClosed.rows) {
-    // PNL de trading de la plateforme = marge − somme versée − frais périodiques − frais de fermeture (hors frais).
-    // Les frais (ouverture, périodiques, fermeture) sont comptés à part, via platform_fees (catégorie « Frais »).
-    const house = Number(r.margin) - Number(r.payout ?? 0) - Number(r.fees_funding ?? 0) - Number(r.fees_close ?? 0);
-    const ts = new Date(r.closed_at).getTime();
-    if (house > 0) push("game_bets", futuresCur, house, ts); else push("game_wins", futuresCur, -house, ts);
-  }
-  for (const r of fees.rows) push("fees", String(r.asset_symbol), Number(r.amount), new Date(r.collected_at).getTime());
-
+/**
+ * Valorise les groupes (au prix du jour de chaque groupe : le prix ne dépend que de l'actif et du jour UTC) et calcule
+ * la période courante, la précédente, les 30 derniers jours et les 12 derniers mois. Fonction pure, comparée à l'ancien
+ * calcul flux par flux dans tests/pnl.test.ts.
+ */
+export function computeFlows(groups: PnlGroup[], valuer: Pick<Valuer, "priceAtEx">, now: number, periodDays: number): FlowResult {
+  const cuts = pnlCuts(now, periodDays);
   const end = now + 1;
   const start = periodDays > 0 ? now - periodDays * DAY : 0;
-  const current = aggregate(events, start, end);
-  const previous = periodDays > 0 ? aggregate(events, start - periodDays * DAY, start) : null;
+  const unpriced = new Set<string>();
+  let dayUsd = 0, currentUsd = 0;
+  const flows: Flow[] = [];
+  for (const g of groups) {
+    const amount = Number(g.amount_sum);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const dayMs = Date.parse(`${g.day}T00:00:00.000Z`);
+    const { price: p, basis } = valuer.priceAtEx(g.asset_symbol, dayMs);
+    if (p === null) unpriced.add(g.asset_symbol);
+    else if (basis === "day") dayUsd += amount * p;
+    else currentUsd += amount * p;
+    flows.push({ cat: g.cat, asset: g.asset_symbol, amount, count: Number(g.cnt), dayMs, seg: Number(g.seg), usd: p === null ? 0 : amount * p });
+  }
 
-  // Mensuel : 12 derniers mois
+  // Un flux de [cuts[i], cuts[j]) a un segment compris entre i+1 et j.
+  const segAfter = (t: number) => cuts.indexOf(t) + 1;
+  const between = (from: number | null, to: number | null) => {
+    const lo = from === null ? 0 : segAfter(from);
+    const hi = to === null ? cuts.length : segAfter(to) - 1;
+    return (f: Flow) => f.seg >= lo && f.seg <= hi;
+  };
+
+  const current = aggregate(flows, between(periodDays > 0 ? start : null, end));
+  const previous = periodDays > 0 ? aggregate(flows, between(start - periodDays * DAY, start)) : null;
+  const last30 = aggregate(flows, between(now - 30 * DAY, end));
+
+  // Mensuel : 12 derniers mois (frontières à minuit UTC : on raisonne par jour)
   const months: PnlReport["months"] = [];
   const base = new Date(now);
   for (let i = 0; i < 12; i++) {
     const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - i, 1));
     const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
-    const t = aggregate(events, d.getTime(), next);
+    const t = aggregate(flows, (f) => f.dayMs >= d.getTime() && f.dayMs < next);
     months.push({ key: d.toISOString().slice(0, 7), fees: t.byCat.fees.usd, game: t.gameNet, costs: t.byCat.staking.usd + t.byCat.referral.usd + t.byCat.defaults.usd, net: t.net });
   }
+
+  const since30 = between(now - 30 * DAY, null);
+  const wakatiNet30 = flows.filter((f) => f.asset === WAKATI && since30(f)).reduce((sum, f) => sum + CATS[f.cat].sign * f.amount, 0);
+  return { current, previous, last30, months, wakatiNet30, unpriced, dayUsd, currentUsd };
+}
+
+export async function loadPnl(periodDays: number, now = Date.now()): Promise<PnlReport> {
+  const db = getSupabaseAdmin();
+  const horizon = new Date(now - 400 * DAY).toISOString();
+
+  const [flows, valuer, stake, wallets] = await Promise.all([
+    // Flux regroupés par la base (catégorie × actif × jour × segment) : quelques centaines de lignes, jamais tout l'historique.
+    // Futures : PNL de trading RÉALISÉ des positions clôturées ; la marge d'une position ouverte n'est pas un gain.
+    db.rpc("admin_pnl_aggregate", { p_cuts: pnlCuts(now, periodDays).map((t) => new Date(t).toISOString()), p_horizon: horizon, p_excluded_fee_types: [...EXCLUDED_FEE_TYPES] }),
+    loadValuer(),
+    q<any>(db.from("admin_staking_overview").select("total_staked, apr").eq("asset_symbol", WAKATI)),
+    q<any>(db.from("treasury_wallets").select("asset_symbol, balance"))
+  ]);
+
+  const { prices, wakatiNow, wakatiPeak } = valuer;
+  const { current, previous, last30, months, wakatiNet30, unpriced, dayUsd, currentUsd } = computeFlows((flows.data ?? []) as PnlGroup[], valuer, now, periodDays);
 
   // Trésorerie actuelle
   const treasury = wallets.rows.map((w) => {
@@ -213,7 +258,6 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
   const treasuryUsd = treasury.reduce((s, w) => s + (w.usd ?? 0), 0);
 
   // Signaux de décision (toujours sur les 30 derniers jours pour les projections)
-  const last30 = aggregate(events, now - 30 * DAY, end);
   const signals: Signal[] = [];
   const f = (n: number) => `${n < 0 ? "-" : ""}${Math.abs(n).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 
@@ -245,7 +289,7 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
   if (current.byCat.defaults.count > 0) signals.push({ tone: "info", title: `${current.byCat.defaults.count} prêt(s) score en défaut sur la période`, detail: `Montant non remboursé : ${f(-current.byCat.defaults.usd)}. Les prêts liquidés ne sont pas dans ce total.` });
 
   const tw = treasury.find((w) => w.asset === WAKATI);
-  const wakatiIn = events.filter((e) => e.asset === WAKATI && e.ts >= now - 30 * DAY).reduce((s, e) => s + CATS[e.cat].sign * e.amount, 0);
+  const wakatiIn = wakatiNet30;
   if (tw && wakatiIn < 0) {
     const days = tw.balance / (-wakatiIn / 30);
     signals.push({ tone: days < 365 ? "warn" : "ok", title: days < 365 ? `Trésorerie WAKATI : environ ${Math.round(days)} jours de réserve` : "Trésorerie WAKATI : plus d'un an de réserve", detail: `Au rythme des 30 derniers jours (${Math.round(-wakatiIn).toLocaleString("fr-FR")} WAKATI sortis nets), la trésorerie de ${Math.round(tw.balance).toLocaleString("fr-FR")} WAKATI est suffisante pour ${days < 365 ? `environ ${Math.round(days)} jours` : "plus d'un an"}.` });
@@ -264,7 +308,7 @@ export async function loadPnl(periodDays: number, now = Date.now()): Promise<Pnl
         : `Chaque flux est valorisé au prix du jour quand il est connu (WAKATI depuis le 4 septembre 2026, autres actifs selon l'historique de prix), sinon au cours actuel. ${pct.toFixed(0)} % de la valeur des flux est au prix du jour, ${(100 - pct).toFixed(0)} % au cours actuel (estimation, surtout du WAKATI plus ancien).`;
     })(),
     valuation: { dayUsd, currentUsd, dayPct: dayUsd + currentUsd > 0 ? (dayUsd / (dayUsd + currentUsd)) * 100 : null },
-    error: [tx.error, fees.error, valuer.error, stake.error, wallets.error].filter(Boolean).join(" · ") || undefined,
-    truncated: !!(tx.truncated || fees.truncated)
+    error: [flows.error?.message, valuer.error, stake.error, wallets.error].filter(Boolean).join(" · ") || undefined,
+    truncated: false
   };
 }
