@@ -1,4 +1,5 @@
 import { loadFeesReport, feeLabel } from "@/modules/revenue/fees";
+import { cachedFor, DEFAULT_TTL_MS } from "@/core/cache";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/core/format";
 import { ErrorNote, PageHeader, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -14,14 +15,14 @@ const nativeList = (byAsset: Map<string, number>) =>
   [...byAsset.entries()].sort((a, b) => b[1] - a[1]).map(([asset, amount]) => `${formatNumber(amount, 4)} ${asset}`).join(" · ");
 
 export default async function FeesPage() {
-  const r = await loadFeesReport();
+  const { value: r, computedAt } = await cachedFor("fees", DEFAULT_TTL_MS, () => loadFeesReport());
   const gamesUsd = r.gameHouseEdge.usd;
   const share = (usd: number) => (r.totalUsd > 0 ? (usd / r.totalUsd) * 100 : 0);
   const maxMonth = Math.max(...r.byMonth.map((m) => m.usd), 0);
 
   return (
     <div>
-      <PageHeader title="Frais" subtitle="Revenus réels de la plateforme : hors lignes de test, hors jeux (game_house_edge) et hors game_net_loss, valorisés au cours actuel. Même total que la Vue d'ensemble." updatedAt={formatDateTime(new Date())} />
+      <PageHeader title="Frais" subtitle="Revenus réels de la plateforme : hors lignes de test, hors jeux (game_house_edge) et hors game_net_loss, valorisés au cours actuel. Même total que la Vue d'ensemble." updatedAt={`${formatDateTime(new Date(computedAt))} (mise en cache 60 s au plus)`} />
       <ErrorNote text={r.error ? `Certaines données sont indisponibles : ${r.error}` : null} />
       {r.truncated && <ErrorNote text="Lecture tronquée : plus de 200 000 lignes de frais, les totaux sont partiels." />}
       {r.unpriced.length > 0 && <div className="wk-alert-warn">Sans cours valide, donc exclus des totaux USD : {r.unpriced.join(", ")}.</div>}

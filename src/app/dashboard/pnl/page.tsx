@@ -1,4 +1,5 @@
 import { loadPnl, CATS, type CatKey } from "@/modules/revenue/pnl";
+import { cachedFor, DEFAULT_TTL_MS } from "@/core/cache";
 import { formatNumber, formatUsd, formatPct, formatDateTime } from "@/core/format";
 import { ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 
@@ -20,7 +21,7 @@ const nativeList = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b
 export default async function PnlPage({ searchParams }: { searchParams: { p?: string } }) {
   const parsed = Number(searchParams.p);
   const period = PERIODS.some((x) => x.value === parsed) && searchParams.p !== undefined ? parsed : 30;
-  const r = await loadPnl(period);
+  const { value: r, computedAt } = await cachedFor(`pnl:${period}`, DEFAULT_TTL_MS, () => loadPnl(period));
   const c = r.current;
   const periodLabel = PERIODS.find((x) => x.value === period)!.label.toLowerCase();
   const delta = r.previous ? c.net - r.previous.net : null;
@@ -29,7 +30,7 @@ export default async function PnlPage({ searchParams }: { searchParams: { p?: st
 
   return (
     <div>
-      <PageHeader title="Résultat" subtitle="Ce que la plateforme gagne et perd : entrées, sorties, et ce qui est de l'argent réel ou du WAKATI." updatedAt={formatDateTime(new Date())} />
+      <PageHeader title="Résultat" subtitle="Ce que la plateforme gagne et perd : entrées, sorties, et ce qui est de l'argent réel ou du WAKATI." updatedAt={`${formatDateTime(new Date(computedAt))} (mise en cache 60 s au plus)`} />
       <ErrorNote text={r.error ? `Certaines données sont indisponibles : ${r.error}` : null} />
       {r.truncated && <ErrorNote text="Lecture tronquée : les totaux sont partiels." />}
 

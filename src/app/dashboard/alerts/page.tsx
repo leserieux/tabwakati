@@ -18,7 +18,7 @@ const SEVERITY: Record<string, { label: string; tone: Tone; rank: number }> = {
   medium: { label: "Moyenne", tone: "warn", rank: 2 }, low: { label: "Faible", tone: "info", rank: 3 }, info: { label: "Info", tone: "info", rank: 4 }
 };
 const CATEGORY: Record<string, string> = {
-  ledger: "Grand livre", assets: "Soldes par actif", risk: "Risque utilisateurs", price_feed: "Flux de prix", security: "Sécurité", audit: "Journal d'audit"
+  ledger: "Grand livre", assets: "Soldes par actif", data: "Lecture de données", risk: "Risque utilisateurs", price_feed: "Flux de prix", security: "Sécurité", audit: "Journal d'audit"
 };
 
 function detailLine(d: Record<string, unknown>): string {

@@ -2,7 +2,7 @@
 
 Ce dossier doit contenir le **schéma SQL réel** du projet (tables, vues `admin_*`, fonctions, politiques). Le code du dashboard en dépend et la règle du projet est : *le schéma versionné est la source de vérité*.
 
-> ⚠️ **Le schéma complet est encore incomplet ici.** Seules les 13 migrations des 22, 23 et 24 novembre 2026 sont versionnées (comptes admin et rôles, gel de compte, idempotence, grand livre des soldes, fonctions du dashboard, alertes). Les ~313 plus anciennes restent à rapatrier avec `supabase db pull` (ci-dessous). Les numéros de version de ces 5 fichiers sont ceux de la base, pour que `db pull` ne crée pas de doublon.
+> ⚠️ **Le schéma complet est encore incomplet ici.** Seules les 14 migrations des 22, 23 et 24 novembre 2026 sont versionnées (comptes admin et rôles, gel de compte, idempotence, grand livre des soldes, fonctions du dashboard, alertes). Les ~313 plus anciennes restent à rapatrier avec `supabase db pull` (ci-dessous). Les numéros de version de ces 5 fichiers sont ceux de la base, pour que `db pull` ne crée pas de doublon.
 
 | Migration | Rôle |
 |---|---|
@@ -16,6 +16,7 @@ Ce dossier doit contenir le **schéma SQL réel** du projet (tables, vues `admin
 | `20261124094221_phase3_alerts_permissions` | Permissions `alerts.read` / `alerts.handle` |
 | `20261124094410_phase3_admin_fees_aggregate` | `admin_fees_aggregate` : frais regroupés en base |
 | `20261125025415_phase3_admin_pnl_aggregate` | `admin_pnl_aggregate` : flux du compte de résultat regroupés par catégorie, actif, jour et segment de fenêtre |
+| `20261125232453_phase3_data_read_alerts` | Alertes « lecture de données » (`fn_admin_note_data_alert`) et fermeture automatique après 24 h |
 | `20261125025450_phase3_admin_pnl_aggregate_futures_asset_default` | La monnaie des futures est lue dans `futures_config` par la base |
 | `20261123212649_phase2_dual_control_approvals` | Table `admin_approvals` et fonctions de la double validation (demande, validation par un second compte, prise en charge unique, annulation, expiration) |
 | `20261123095557_phase2_sessions_audit_chain_permissions` | Sessions admin révocables, chaînage SHA-256 du journal d'audit, limitation de connexion par IP, permission `exports.run` |

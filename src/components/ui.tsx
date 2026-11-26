@@ -1,5 +1,6 @@
 import React from "react";
 import { formatPct } from "@/core/format";
+import { refreshData } from "@/app/actions/refresh";
 
 export type Tone = "ok" | "warn" | "bad" | "info";
 
@@ -27,7 +28,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   }
 }
 
-export function PageHeader({ title, subtitle, updatedAt }: { title: string; subtitle?: string; updatedAt?: string }) { return <header className="wk-head"><div><h1 className="wk-title">{title}</h1>{subtitle && <p className="wk-sub">{subtitle}</p>}</div><div className="wk-head-side">{updatedAt && <span>Actualisé le {updatedAt}</span>}<a className="wk-btn" href=""><Icon name="refresh" size={15} />Actualiser</a></div></header>; }
+export function PageHeader({ title, subtitle, updatedAt }: { title: string; subtitle?: string; updatedAt?: string }) { return <header className="wk-head"><div><h1 className="wk-title">{title}</h1>{subtitle && <p className="wk-sub">{subtitle}</p>}</div><div className="wk-head-side">{updatedAt && <span>Actualisé le {updatedAt}</span>}<form action={refreshData} style={{ display: "contents" }}><button type="submit" className="wk-btn"><Icon name="refresh" size={15} />Actualiser</button></form></div></header>; }
 export function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) { return <section className="wk-section"><div className="wk-section-head"><h2 className="wk-h2">{title}</h2>{hint && <p className="wk-hint">{hint}</p>}</div>{children}</section>; }
 export function TableWrap({ children }: { children: React.ReactNode }) { return <div className="wk-tablewrap"><table className="wk-table">{children}</table></div>; }
 export function Th({ children, right, hideSm, colSpan }: { children?: React.ReactNode; right?: boolean; hideSm?: boolean; colSpan?: number }) { return <th colSpan={colSpan} className={["wk-th", right ? "wk-right" : "", hideSm ? "wk-hide-sm" : ""].filter(Boolean).join(" ")}>{children}</th>; }

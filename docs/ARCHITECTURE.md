@@ -143,3 +143,12 @@ if (gate.kind !== "proceed") gateRedirect(PATH, gate);
 Pour tout total sur une grande table (frais, transactions, positions) : une fonction SQL `admin_*_aggregate` renvoie des **groupes** (par actif, type, mois…), jamais les lignes. Le code TypeScript applique ensuite les règles métier (types exclus, valorisation en USD au cours actuel) dans une **fonction pure** (`buildFeesReport`). Modèle à suivre : `modules/metrics/fee-aggregates.ts` + `modules/revenue/fees.ts`.
 
 Preuve d'équivalence obligatoire quand on remplace un calcul existant : (1) la fonction SQL est comparée à un calcul ligne par ligne sur la vraie base ; (2) un test recopie l'**ancien** algorithme et le compare au nouveau sur des données aléatoires (`tests/fees.test.ts`), avec des frontières de fenêtres, des prix manquants et des dates futures.
+
+
+## Cache court et fraîcheur
+
+`cachedFor(clé, 60 s, chargeur)` (`src/core/cache.ts`) pour une page dont le calcul est lourd et ne dépend ni de la session ni d'une écriture. Il renvoie `computedAt` : **toujours afficher cette heure** dans l'en-tête (`updatedAt`), jamais `new Date()`. Mettre les paramètres dans la clé (`pnl:${période}`). Un résultat contenant `error` n'est pas gardé.
+
+## Lectures volumineuses
+
+`fetchAll` lit toute une requête en mémoire (1 000 lignes par appel). À partir de 50 000 lignes il crée une alerte « Lecture volumineuse », à 200 000 « Lecture tronquée » (Système › Alertes) : c'est le signal pour passer ce calcul en agrégation côté base (section précédente), pas pour relever la limite.
