@@ -10,7 +10,7 @@ Ambition : un back-office du niveau de ceux de Binance, Coinbase ou Bybit. Un ad
 |---|---|
 | **Accueil** | État de la plateforme, chiffres clés comparés à la période précédente, actions à traiter triées par gravité |
 | **Trésorerie** | Actifs (dû / détenu / écart), à approvisionner, couverture, réserve de retrait, collecte des dépôts, liquidité des échanges, plan staking |
-| **Opérations** | File d'attente (bloqué ou en échec), transactions, tâches |
+| **Opérations** | File d'attente (bloqué ou en échec), dépôts à vérifier (crédit manuel après contrôle), transactions, tâches |
 | **Utilisateurs** | Liste et fiche, croissance, rétention et valeur, acquisition, rentabilité |
 | **Revenus** | Résultat (P&L), frais, dépôts |
 | **Produits** | Prêts, staking, futures, jeux, roue, P2P, marchés |

@@ -20,6 +20,7 @@ const RULES: ReadonlyArray<readonly [prefix: string, permission: Permission]> = 
   ["/dashboard/users", "users.read"],
   ["/dashboard/transactions", "users.read"],
   ["/dashboard/operations", "users.read"],
+  ["/dashboard/deposits", "finance.read"],
   ["/dashboard/analytics", "users.read"],
   ["/dashboard/telegram", "users.read"],
   ["/dashboard/pnl/acquisition", "users.read"],

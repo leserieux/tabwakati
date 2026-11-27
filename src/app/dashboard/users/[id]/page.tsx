@@ -7,6 +7,7 @@ import { loadUserFutures } from "@/modules/products/futures";
 import { txStatusLabel, txStatusTone, txTypeLabel } from "@/modules/operations/transactions";
 import { Empty, ErrorNote, PageHeader, Pill, Section, TableWrap, Td, Th } from "@/components/ui";
 import AccountControl from "@/components/account-control";
+import BalanceAdjust from "@/components/balance-adjust";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,7 +82,7 @@ type RiskFlagRow = {
   detected_at: string | null;
 };
 
-export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string; saved?: string; error?: string } }) {
+export default async function UserDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { asset?: string; saved?: string; error?: string; pending?: string } }) {
   const futuresPromise = loadUserFutures(params.id);
   const db = getSupabaseAdmin();
   const selectedAsset = (searchParams?.asset || "").trim();
@@ -174,6 +175,8 @@ export default async function UserDetailPage({ params, searchParams }: { params:
       </div>
 
       <AccountControl userId={user.id} saved={searchParams?.saved} error={searchParams?.error} />
+
+      <BalanceAdjust userId={user.id} pending={searchParams?.pending} />
 
       <Section title="Décision admin" hint="Résumé lisible des signaux récents et du niveau d’attention recommandé.">
         <div className="wk-panel" style={{ borderLeft: `4px solid ${decision.tone === "bad" ? "var(--bad)" : decision.tone === "warn" ? "var(--warn)" : decision.tone === "info" ? "var(--info)" : "var(--ok)"}` }}>

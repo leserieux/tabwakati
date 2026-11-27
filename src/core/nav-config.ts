@@ -27,6 +27,7 @@ export const NAV: NavEntry[] = [
   ] },
   { key: "ops", label: "Opérations", icon: "clock", href: "/dashboard/operations", tabs: [
     { href: "/dashboard/operations", label: "File d'attente" },
+    { href: "/dashboard/deposits", label: "Dépôts à vérifier" },
     { href: "/dashboard/transactions", label: "Transactions" },
     { href: "/dashboard/tasks", label: "Tâches" }
   ] },

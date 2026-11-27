@@ -5,6 +5,18 @@ Historique chronologique (le plus récent en haut) repris tel quel de l'ancien R
 > **Chemins** : les entrées antérieures au 2026-11-22 citent les anciens chemins (`lib/solvency.ts`, `lib/custody-plan`, `lib/metrics/rules.ts`…).
 > Depuis la refonte, tout est sous `src/` rangé par domaine : voir le tableau « ancien chemin → nouveau chemin » dans [ARCHITECTURE.md](ARCHITECTURE.md#correspondance-des-anciens-chemins).
 
+## 2026-11-28 : correction manuelle des soldes et dépôts à vérifier
+
+- **Constat sur la base** : 11 dépôts mobile money en « failed » sur 30 jours (14 225 FCFA demandés, dont des échecs « fonds insuffisants » ou « numéro invalide » mais aussi des délais dépassés où l'argent a pu partir), aucun solde négatif, grand livre des soldes sans écart (269 écritures, 0 différence). Toutes les fonctions et tables appelées par le dashboard existent bien dans la base.
+- **Nouvelle fonction SQL `fn_admin_adjust_balance`** (service_role uniquement, migration `20261127232456`) : crédite ou débite le solde disponible avec verrou de ligne, motif obligatoire, transaction `balance_adjustment` (ou régularisation du dépôt existant), notification optionnelle. Un dépôt déjà « completed » ne peut pas être recrédité ; un débit au-delà du solde est refusé. Testée sur la vraie base dans une transaction annulée (crédit, double crédit refusé, débit excessif refusé, motif trop court refusé).
+- **Opérations › Dépôts à vérifier** (`/dashboard/deposits`) : liste des dépôts en échec ou bloqués (90 jours) avec fournisseur, téléphone, référence et motif d'échec ; crédit en un clic avec montant pré-rempli (montant − frais) et motif obligatoire.
+- **Fiche utilisateur › Corriger un solde** : dépôts à régulariser de cet utilisateur, correction libre (créditer / débiter, par actif, avec le solde actuel affiché), dernières corrections.
+- **Sécurité** : action `balance.adjust` sensible (motif obligatoire, double validation si `ADMIN_DUAL_CONTROL=on`), permission `finance.write` (finance et super-admin), confirmation avant envoi, trace dans le journal d'audit avec solde avant/après.
+- **Tests** : `tests/balance-adjust.test.ts` (14 tests : montants, motif, sens, dépôt, redirection sûre, droits).
+- **Ménage à faire** : les dossiers `lib/`, `components/` et le fichier `middleware.ts` à la racine du dépôt sont d'anciennes copies (imports `@/lib/...` obsolètes), ignorés par la compilation : à supprimer.
+
+---
+
 ## 2026-11-24 : phase 3 (début), fiabilité des chiffres
 
 - **Centre d'alertes visible** (Système › Alertes + bandeau sur toutes les pages pour finance, risque et super-admins) : jusqu'ici les alertes générées par la base (grand livre, risque, flux de prix, sécurité, intégrité du journal) n'étaient affichées nulle part. Prise en charge, résolution avec note obligatoire, historique. Permissions `alerts.read` / `alerts.handle`.

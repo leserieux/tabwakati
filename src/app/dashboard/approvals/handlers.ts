@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { forceCloseAll, updateFuturesConfig } from "@/app/dashboard/futures/actions";
 import { burnNow, updateBurnSettings, updateReserveSettings } from "@/app/dashboard/wakati/burns/actions";
+import { adjustBalance } from "@/app/dashboard/balances/actions";
 import { runSweep } from "@/core/sweep";
 import type { Handlers } from "@/core/approvals/executor";
 
@@ -14,6 +15,7 @@ export const HANDLERS: Handlers = {
   "wakati.burn_now": burnNow,
   "wakati.burn_settings": updateBurnSettings,
   "wakati.reserve_settings": updateReserveSettings,
+  "balance.adjust": adjustBalance,
   "sweep.real": async (fd) => {
     const result = await runSweep({ dryRun: false, network: String(fd.get("network") ?? "") || undefined, userAddressId: String(fd.get("userAddressId") ?? "") || undefined });
     // Même convention que les autres actions : l'issue est lue dans la redirection.

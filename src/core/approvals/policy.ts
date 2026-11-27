@@ -9,7 +9,8 @@ export const SENSITIVE_ACTIONS = {
   "wakati.burn_now": "Lancer un passage de burn maintenant",
   "wakati.burn_settings": "Changer les réglages du burn",
   "wakati.reserve_settings": "Changer la caisse et le prix du WAKATI",
-  "sweep.real": "Balayage réel des dépôts (transactions on-chain)"
+  "sweep.real": "Balayage réel des dépôts (transactions on-chain)",
+  "balance.adjust": "Corriger le solde d'un utilisateur (crédit ou débit manuel)"
 } as const;
 
 export type SensitiveType = keyof typeof SENSITIVE_ACTIONS;
